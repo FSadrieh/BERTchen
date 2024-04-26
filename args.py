@@ -15,19 +15,16 @@ class TrainingArgs:
 
     data_dir: Path = field(alias="-d")
 
-    hf_model_name: str = field(default="roberta-base", alias="--model")
+    hf_model_name: str = field(default="google-bert/bert-base-cased", alias="--model")
     "HuggingFace model identifier. This is used to construct the model architecture and load pretrained weights if not specified otherwise."
 
-    from_scratch: bool = field(default=False)
+    from_scratch: bool = field(default=True)
     "Do not use pre-trained weights to initialize the model."
 
     saved_checkpoint_path: str | None = field(default=None, alias="--checkpoint")
     "Path to a saved pytorch-lightning checkpoint. Use the wandb:<wandb-run-id> syntax to load a checkpoint from W&B."
 
     resume: bool = False
-
-    language_modeling_objective: Literal["mlm", "clm"] = field(default="mlm")
-    "Whether to train a masked language model or a causal language model."
 
     train_file: str = field(default="train.txt")
     "Name of the training file."

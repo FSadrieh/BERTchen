@@ -80,7 +80,6 @@ def main(args: TrainingArgs):
     # Resume from checkpoint if specified
     model_args = dict(
         model_name_or_path=args.hf_model_name,
-        lm_objective=args.language_modeling_objective,
         from_scratch=args.from_scratch,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
