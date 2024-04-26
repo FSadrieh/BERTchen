@@ -13,7 +13,8 @@ from simple_parsing import parse
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 from args import TrainingArgs
-from dlib import CUDAMetricsCallback, WandbCleanupDiskAndCloudSpaceCallback, get_rank, log_slurm_info, wait_for_debugger
+from dlib import CUDAMetricsCallback, WandbCleanupDiskAndCloudSpaceCallback, get_rank, log_slurm_info
+from src.utils import wait_for_debugger
 from src.data_loading import LMDataModule
 from src.helpers import (
     ProgressMetricCallback,
@@ -22,8 +23,8 @@ from src.helpers import (
 )
 from src.model import BasicLM
 
-WANDB_PROJECT = "nlp-research-template"
-WANDB_ENTITY = "konstantinjdobler"
+WANDB_PROJECT = "bert-pretraining"
+WANDB_ENTITY = "raphael-team"
 
 
 def main(args: TrainingArgs):
@@ -54,7 +55,7 @@ def main(args: TrainingArgs):
     wandb_logger = WandbLogger(
         project=WANDB_PROJECT,
         entity=WANDB_ENTITY,
-        log_model="all",
+        log_model=True,
         tags=args.wandb_tags,
         save_dir="logs/",
         **wandb_extra_args,

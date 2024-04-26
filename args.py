@@ -26,10 +26,10 @@ class TrainingArgs:
 
     resume: bool = False
 
-    train_file: str = field(default="train.txt")
+    train_file: str = field(default="train.jsonl")
     "Name of the training file."
 
-    val_file: str = field(default="val.txt")
+    val_file: str = field(default="dev.jsonl")
     "Name of the validation file."
 
     tokenizer_path: str | None = field(default=None)

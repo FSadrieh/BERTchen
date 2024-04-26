@@ -9,7 +9,7 @@ def find_multiple(n: int, k: int) -> int:
     return n + k - (n % k)
 
 
-def wait_for_debugger(port: int = 5678):
+def wait_for_debugger(port: int = 56789):
     """
     Pauses the program until a remote debugger is attached. Should only be called on rank0.
     """
