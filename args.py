@@ -105,10 +105,6 @@ class TrainingArgs:
     preprocessing_workers: int = field(default=-1, aliases="--pw")
     "Number of workers for preprocessing the datasets. If -1, use all available CPUs."
 
-    data_preprocessing_only: bool = field(default=False)
-    conserve_disk_space: bool = field(default=False)
-    overwrite_data_cache: bool = field(default=False)
-
     ############################
     ###### Logging & Misc ######
     ############################
@@ -140,6 +136,16 @@ class TrainingArgs:
 
     fast_dev_run: bool = field(default=False)
     "Do fast run through training and validation with reduced sizes."
+
+    ###############################################
+    ###### Efficient Bert Pretraining Params ######
+    ###############################################
+
+    task: Literal["pretraining", "sequence-classifcation", "token-classification"] = field(default="pretraining")
+
+    classifier_dropout: float = field(default=0.1)
+
+    num_labels: int = field(default=2)
 
     def __post_init__(self):
         assert self.num_devices > 0

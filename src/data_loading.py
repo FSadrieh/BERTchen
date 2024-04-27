@@ -1,19 +1,14 @@
-import errno
-import glob
 import os
-import shutil
-import tempfile
-from itertools import chain
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import datasets
 import lightning as L
 from print_on_steroids import logger
 from torch.utils.data.dataloader import DataLoader
-from transformers import DataCollatorForWholeWordMask, PreTrainedTokenizerFast
+from transformers import PreTrainedTokenizerFast, DataCollatorWithPadding
 
 from dlib.frameworks.pytorch import get_rank
+from src.custom_data_collator import PretrainingDataCollator
 
 if TYPE_CHECKING:
     from train import TrainingArgs
@@ -56,11 +51,18 @@ class LMDataModule(L.LightningDataModule):
 
         pad_to_multiple_of = 8 if self.args.precision in ["16-mixed", "bf16-mixed"] else None
 
-        self.data_collator = DataCollatorForWholeWordMask(
-            tokenizer=self.tokenizer,
-            mlm=True,
-            pad_to_multiple_of=pad_to_multiple_of,
-        )
+        if self.args.task == "pretraining":
+            self.data_collator = PretrainingDataCollator(
+                tokenizer=self.tokenizer,
+                mlm=True,
+                pad_to_multiple_of=pad_to_multiple_of,
+            )
+        else:
+            self.data_collator = DataCollatorWithPadding(
+                tokenizer=self.tokenizer,
+                padding=True,
+                pad_to_multiple_of=pad_to_multiple_of,
+            )
 
         self.train_dataset = train_val_datasets["train"]
         self.val_dataset = train_val_datasets["val"]

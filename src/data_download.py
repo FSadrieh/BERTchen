@@ -143,6 +143,7 @@ def load_right_dataset(
             num_proc=None if stream else args.processes,
         )
         dataset = dataset.map(lambda x: {"text": "Kontext: " + x["context"] + ";\nFrage: " + x["question"]})
+        # TODO: How should the label be formatted? Start, Middle, End, Outside per token?
         dataset = dataset.map(lambda x: {"label": x["answers"]["text"][0]})
         dataset = dataset.remove_columns(["id", "context", "question", "answers"])
         train_val_datasets = (dataset, None)
@@ -175,13 +176,20 @@ def load_right_dataset(
         train_dataset = train_dataset.filter(lambda x: x["text"])
         dev_dataset = dev_dataset.filter(lambda x: x["text"])
         if dataset_name == "germeval_A":
-            train_dataset = train_dataset.map(lambda x: {"label": "Ja" if x["relevance"] else "Nein"})
-            dev_dataset = dev_dataset.map(lambda x: {"label": "Ja" if x["relevance"] else "Nein"})
+            train_dataset = train_dataset.map(lambda x: {"label": int(x["relevance"])})
+            dev_dataset = dev_dataset.map(lambda x: {"label": int(x["relevance"])})
             train_dataset = train_dataset.remove_columns(["relevance", "sentiment", "aspect", "url"])
             dev_dataset = dev_dataset.remove_columns(["relevance", "sentiment", "aspect", "url"])
         else:
-            train_dataset = train_dataset.map(lambda x: {"label": x["sentiment"]})
-            dev_dataset = dev_dataset.map(lambda x: {"label": x["sentiment"]})
+            def _encode_sentiment(sentiment):
+                if sentiment == "positive":
+                    return 2
+                elif sentiment == "neutral":
+                    return 1
+                else:
+                    return 0
+            train_dataset = train_dataset.map(lambda x: {"label": _encode_sentiment(x["sentiment"])})
+            dev_dataset = dev_dataset.map(lambda x: {"label": _encode_sentiment(x["sentiment"])})
             train_dataset = train_dataset.remove_columns(["relevance", "sentiment", "aspect", "url"])
             dev_dataset = dev_dataset.remove_columns(["relevance", "sentiment", "aspect", "url"])
 
@@ -218,14 +226,15 @@ def make_tokenize_function(tokenizer, max_seq_length=None, truncate=True, is_pre
             truncation=truncate,
             max_length=max_seq_length,
         )
-        tokenized_labels = tokenizer(
-            examples["label"],
-            padding=False,
-            truncation=truncate,
-            max_length=max_seq_length,
-            add_special_tokens=False,
-        )
-        return {**tokenized, "labels": tokenized_labels["input_ids"]}
+        if False: #TODO: Do we need this. How do we format germanquad
+            tokenized_labels = tokenizer(
+                examples["label"],
+                padding=False,
+                truncation=truncate,
+                max_length=max_seq_length,
+                add_special_tokens=False,
+            )
+        return {**tokenized, "labels": examples["label"]}#tokenized_labels["input_ids"]}
 
     def pre_training_tokenize_function(examples):
         text = [example.strip() + "\n" for example in examples["text"] if example != "\n"]

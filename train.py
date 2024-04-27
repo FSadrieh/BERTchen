@@ -21,7 +21,7 @@ from src.helpers import (
     check_checkpoint_path_for_wandb,
     check_for_wandb_checkpoint_and_download_if_necessary,
 )
-from src.model import BasicLM
+from src.model import PretrainBERT, FinetuneBERT
 
 WANDB_PROJECT = "bert-pretraining"
 WANDB_ENTITY = "raphael-team"
@@ -46,7 +46,7 @@ def main(args: TrainingArgs):
     args.seed = seed_everything(workers=True, seed=args.seed)
 
     ############# Construct W&B Logger ##############
-    if args.offline or args.fast_dev_run or args.data_preprocessing_only:
+    if args.offline or args.fast_dev_run:
         os.environ["WANDB_MODE"] = "dryrun"
     wandb_extra_args = dict(name=args.run_name)
     if args.saved_checkpoint_path and args.resume and check_checkpoint_path_for_wandb(args.saved_checkpoint_path):
@@ -61,7 +61,6 @@ def main(args: TrainingArgs):
         **wandb_extra_args,
     )
     wandb_logger.log_hyperparams(dataclasses.asdict(args))
-    wandb_logger.experiment.log_code(".")  # log code to wandb to be able to reproduce the run
     if current_process_rank == 0:
         logger.info(args)
     if current_process_rank == 0 and not args.resume and not args.offline:
@@ -80,8 +79,6 @@ def main(args: TrainingArgs):
 
     # Resume from checkpoint if specified
     model_args = dict(
-        model_name_or_path=args.hf_model_name,
-        from_scratch=args.from_scratch,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         beta1=args.beta1,
@@ -95,15 +92,19 @@ def main(args: TrainingArgs):
             args.saved_checkpoint_path, wandb_logger.experiment
         )
 
-        if args.resume:  # load weights, optimizer states, scheduler state, ...\
-            model = BasicLM.load_from_checkpoint(args.saved_checkpoint_path, save_hyperparameters=False)
+        if args.resume:  # load weights, optimizer states, scheduler state, ...\. Note we do not support resuming finetuning.
+            model = PretrainBERT.load_from_checkpoint(args.saved_checkpoint_path, save_hyperparameters=False)
             # we will resume via trainer.fit(ckpt_path=...)
         else:  # load only weights
-            model = BasicLM(**model_args)
+            model = PretrainBERT(**model_args, model_name_or_path=args.hf_model_name, from_scratch=args.from_scratch,)
             torch_load = torch.load(args.saved_checkpoint_path, map_location=torch.device("cpu"))
             model.load_state_dict(torch_load["state_dict"], strict=False)
     else:
-        model = BasicLM(**model_args)
+        model = PretrainBERT(**model_args, model_name_or_path=args.hf_model_name, from_scratch=args.from_scratch,)
+
+    # All finetuning tasks are classification tasks
+    if "classification" in args.task:
+        model = FinetuneBERT(model=model.model, **model_args, num_labels=args.num_labels, classifier_dropout=args.classifier_dropout)
 
     tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(args.tokenizer_path or args.hf_model_name, use_fast=True)
     if not args.resume:
