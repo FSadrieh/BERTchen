@@ -30,7 +30,14 @@ from transformers import AutoTokenizer, PreTrainedTokenizerFast
 from utils import wait_for_debugger
 
 
-PRE_TRAINING_DATASETS = ["c4", "cc100", "oscar2023"]
+DATASET_TO_TASK = {
+    "c4": "pre-training",
+    "cc100": "pre-training",
+    "oscar2023": "pre-training",
+    "germanquad": "question-answering",
+    "germeval_A": "sequence-classification",
+    "germeval_B": "sequence-classification",
+}
 
 
 @dataclass
@@ -142,10 +149,7 @@ def load_right_dataset(
             streaming=stream,
             num_proc=None if stream else args.processes,
         )
-        dataset = dataset.map(lambda x: {"text": "Kontext: " + x["context"] + ";\nFrage: " + x["question"]})
-        # TODO: How should the label be formatted? Start, Middle, End, Outside per token?
-        dataset = dataset.map(lambda x: {"label": x["answers"]["text"][0]})
-        dataset = dataset.remove_columns(["id", "context", "question", "answers"])
+        dataset = dataset.remove_columns(["id"])
         train_val_datasets = (dataset, None)
 
     elif dataset_name in ["germeval_A", "germeval_B"]:
@@ -181,6 +185,7 @@ def load_right_dataset(
             train_dataset = train_dataset.remove_columns(["relevance", "sentiment", "aspect", "url"])
             dev_dataset = dev_dataset.remove_columns(["relevance", "sentiment", "aspect", "url"])
         else:
+
             def _encode_sentiment(sentiment):
                 if sentiment == "positive":
                     return 2
@@ -188,6 +193,7 @@ def load_right_dataset(
                     return 1
                 else:
                     return 0
+
             train_dataset = train_dataset.map(lambda x: {"label": _encode_sentiment(x["sentiment"])})
             dev_dataset = dev_dataset.map(lambda x: {"label": _encode_sentiment(x["sentiment"])})
             train_dataset = train_dataset.remove_columns(["relevance", "sentiment", "aspect", "url"])
@@ -197,7 +203,7 @@ def load_right_dataset(
     return train_val_datasets
 
 
-def group_lines(args, dataset: datasets.Dataset):
+def group_lines(args, dataset: datasets.Dataset, stream: bool = False):
     def _document_grouping_f(examples: Dict[str, list[str]]):
         documents = []
         current_doc = ""
@@ -209,32 +215,43 @@ def group_lines(args, dataset: datasets.Dataset):
                 current_doc += example
         return {"docs": documents}
 
-    batch_size = 16_000 if args.stream else len(dataset)
+    batch_size = 16_000 if stream else len(dataset)
     map_args = dict(batched=True, batch_size=batch_size, remove_columns=["text", "id"])
-    if not args.stream:
+    if not stream:
         map_args["num_proc"] = args.processes  # stream does not support multiprocessing
     dataset = dataset.map(_document_grouping_f, **map_args)
     dataset = dataset.rename_column("docs", "text")
     return dataset
 
 
-def make_tokenize_function(tokenizer, max_seq_length=None, truncate=True, is_pre_training: bool = False):
-    def fine_tuning_tokenize_function(examples):
+def make_tokenize_function(tokenizer, task_type, max_seq_length=None, truncate=True):
+    def sequence_classification_tokenize_function(examples):
         tokenized = tokenizer(
             examples["text"],
             padding=False,
             truncation=truncate,
             max_length=max_seq_length,
         )
-        if False: #TODO: Do we need this. How do we format germanquad
-            tokenized_labels = tokenizer(
-                examples["label"],
-                padding=False,
-                truncation=truncate,
-                max_length=max_seq_length,
-                add_special_tokens=False,
-            )
-        return {**tokenized, "labels": examples["label"]}#tokenized_labels["input_ids"]}
+        return {**tokenized, "labels": examples["label"]}
+
+    def question_answering_tokenize_function(examples):
+        questions = [q.strip() for q in examples["question"]]
+        tokenized = tokenizer(
+            questions,
+            examples["context"],
+            truncation="only_second",
+            max_length=max_seq_length,
+            stride=50,
+            return_overflowing_tokens=True,
+            return_offsets_mapping=True,
+        )
+        start_positions, end_positions = _get_labels_for_qa(tokenized, examples["answers"])
+        return {
+            "input_ids": tokenized["input_ids"],
+            "attention_mask": tokenized["attention_mask"],
+            "start_positions": start_positions,
+            "end_positions": end_positions,
+        }
 
     def pre_training_tokenize_function(examples):
         text = [example.strip() + "\n" for example in examples["text"] if example != "\n"]
@@ -245,7 +262,51 @@ def make_tokenize_function(tokenizer, max_seq_length=None, truncate=True, is_pre
             max_length=max_seq_length,
         )
 
-    return pre_training_tokenize_function if is_pre_training else fine_tuning_tokenize_function
+    if task_type == "sequence-classification":
+        return sequence_classification_tokenize_function
+    if task_type == "question-answering":
+        return question_answering_tokenize_function
+    return pre_training_tokenize_function
+
+
+def _get_labels_for_qa(inputs, answers):
+    # This function is inspired from https://huggingface.co/learn/nlp-course/chapter7/7
+
+    start_positions = []
+    end_positions = []
+    for i, offset in enumerate(inputs["offset_mapping"]):
+        sample_idx = inputs["overflow_to_sample_mapping"][i]
+        answer = answers[sample_idx]
+        start_char = answer["answer_start"][0]
+        end_char = answer["answer_start"][0] + len(answer["text"][0].strip())
+        sequence_ids = inputs.sequence_ids(i)
+
+        # Find the start and end of the context
+        idx = 0
+        while sequence_ids[idx] != 1:
+            idx += 1
+        context_start = idx
+        while sequence_ids[idx] == 1:
+            idx += 1
+        context_end = idx - 1
+
+        # If the answer is not fully inside the context, label is (0, 0)
+        if offset[context_start][0] > start_char or offset[context_end][1] < end_char:
+            start_positions.append(0)
+            end_positions.append(0)
+        else:
+            # Otherwise it's the start and end token positions
+            idx = context_start
+            while idx <= context_end and offset[idx][0] <= start_char:
+                idx += 1
+            start_positions.append(idx - 1)
+
+            idx = context_end
+            while idx >= context_start and offset[idx][1] >= end_char:
+                idx -= 1
+            end_positions.append(idx + 1)
+
+    return start_positions, end_positions
 
 
 def make_group_text_function(max_seq_length):
@@ -288,11 +349,13 @@ def main(args: Args):
         os.makedirs(tmp_cache_dir, exist_ok=True)
 
     ##### Load dataset #####
-    stream = args.dataset in PRE_TRAINING_DATASETS
+    stream = DATASET_TO_TASK[args.dataset] == "pre-training"
     train_val_datasets = load_right_dataset(args.dataset, tmp_cache_dir, stream, args)
 
     ##### For CC100: Group individual lines into documents #####
-    train_val_datasets = (group_lines(args, train_val_datasets[0]), None) if args.dataset == "cc100" else train_val_datasets
+    train_val_datasets = (
+        (group_lines(args, train_val_datasets[0], stream), None) if args.dataset == "cc100" else train_val_datasets
+    )
 
     ##### Process dataset #####
     logger.info("Starting mapping & chunking")
@@ -302,14 +365,14 @@ def main(args: Args):
             processed_datasets.append(None)
             continue
         processed_dataset = dataset.map(
-            make_tokenize_function(tokenizer, max_seq_length=args.max_seq_length),
+            make_tokenize_function(tokenizer, max_seq_length=args.max_seq_length, task_type=DATASET_TO_TASK[args.dataset]),
             batch_size=1_000,
             batched=True,
             num_proc=None if stream else args.processes,
             remove_columns=dataset.column_names,
         )
         logger.info("Tokenization finished!")
-        if args.dataset in PRE_TRAINING_DATASETS:
+        if DATASET_TO_TASK[args.dataset] == "pre-training":
             processed_dataset = processed_dataset.map(
                 make_group_text_function(args.max_seq_length),
                 batch_size=1_000,

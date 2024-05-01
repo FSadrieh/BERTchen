@@ -141,7 +141,7 @@ class TrainingArgs:
     ###### Efficient Bert Pretraining Params ######
     ###############################################
 
-    task: Literal["pretraining", "sequence-classifcation", "token-classification"] = field(default="pretraining")
+    task: Literal["pretraining", "sequence-classifcation", "question-answering"] = field(default="pretraining")
 
     classifier_dropout: float = field(default=0.1)
 

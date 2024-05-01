@@ -9,6 +9,7 @@ from transformers.optimization import get_scheduler
 from transformers.models.bert.modeling_bert import BertOnlyMLMHead
 from transformers.modeling_outputs import BaseModelOutputWithPoolingAndCrossAttentions
 
+
 class PretrainBERT(L.LightningModule):
     def __init__(
         self,
@@ -47,7 +48,7 @@ class PretrainBERT(L.LightningModule):
 
     def forward(self, input_ids, attention_mask, labels, token_type_ids=None):
         outputs = self.model(input_ids, attention_mask, token_type_ids=token_type_ids, output_hidden_states=True)
-        sequence_output = outputs.last_hidden_state #TODO: equivalent to outputs[0]?
+        sequence_output = outputs.last_hidden_state
         prediction_scores = self.head(sequence_output)
         loss = self.loss_function(prediction_scores.view(-1, self.model.config.vocab_size), labels.view(-1))
         return loss
@@ -127,12 +128,12 @@ class FinetuneBERT(L.LightningModule):
         super().__init__()
         if save_hyperparameters:
             self.save_hyperparameters(ignore=["save_hyperparameters"])
-        
+
         self.model = model
         if task_type == "sequence-classification":
             self.head = SequenceClsHead(model.config.hidden_size, num_labels, classifier_dropout)
         else:
-            self.head = TokenClsHead(model.config.hidden_size, num_labels, classifier_dropout)
+            self.head = QuestionAnsweringHead(model.config.hidden_size, num_labels)
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.beta1 = beta1
@@ -142,9 +143,9 @@ class FinetuneBERT(L.LightningModule):
         self.eval_interval = eval_interval
         self.epsilon = epsilon
 
-    def forward(self, input_ids, attention_mask, labels, token_type_ids=None):
+    def forward(self, input_ids, attention_mask, labels=None, token_type_ids=None, start_positions=None, end_positions=None):
         output = self.model(input_ids, attention_mask, token_type_ids=token_type_ids)
-        return self.head(output, labels)
+        return self.head(output, labels=labels, start_positions=start_positions, end_positions=end_positions)
 
     def training_step(self, batch, batch_idx):
         loss, logits = self(**batch)
@@ -210,24 +211,34 @@ class SequenceClsHead(nn.Module):
 
         self.num_labels = num_labels
 
-    def forward(self, sequence_output: BaseModelOutputWithPoolingAndCrossAttentions, labels):
+    def forward(
+        self, sequence_output: BaseModelOutputWithPoolingAndCrossAttentions, labels, start_positions=None, end_positions=None
+    ):
         sequence_output = self.dropout(sequence_output.pooler_output)
         logits = self.cls(sequence_output)
         loss = self.loss_function(logits.view(-1, self.num_labels), labels.view(-1))
         return loss, logits
 
-class TokenClsHead(nn.Module):
-    def __init__(self, hidden_size, num_labels, classifier_dropout):
+
+class QuestionAnsweringHead(nn.Module):
+    # Similar to the BertForQuestionAnswering class in the transformers library: https://github.com/huggingface/transformers/blob/v4.40.1/src/transformers/models/bert/modeling_bert.py#L1774
+    def __init__(self, hidden_size, num_labels):
         super().__init__()
-        self.dropout = nn.Dropout(classifier_dropout)
-        self.cls = nn.Linear(hidden_size, num_labels)
-        self.loss_function = nn.CrossEntropyLoss()
+        self.qa = nn.Linear(hidden_size, num_labels)
 
-        self.num_labels = num_labels
+    def forward(
+        self, sequence_output: BaseModelOutputWithPoolingAndCrossAttentions, start_positions, end_positions, labels=None
+    ):
+        logits = self.qa(sequence_output.last_hidden_state)
+        start_logits, end_logits = logits.split(1, dim=-1)
+        start_logits = start_logits.squeeze(-1).contiguous()
+        end_logits = end_logits.squeeze(-1).contiguous()
+        ignored_index = start_logits.size(1)
+        start_positions = start_positions.clamp(0, ignored_index)
+        end_positions = end_positions.clamp(0, ignored_index)
 
-    def forward(self, sequence_output: BaseModelOutputWithPoolingAndCrossAttentions, labels):
-        sequence_output = self.dropout(sequence_output)
-        logits = self.cls(sequence_output.last_hidden_state)
-        loss = self.loss_function(logits.view(-1, self.num_labels), labels.view(-1))
+        loss_fct = nn.CrossEntropyLoss(ignore_index=ignored_index)
+        start_loss = loss_fct(start_logits, start_positions)
+        end_loss = loss_fct(end_logits, end_positions)
+        loss = (start_loss + end_loss) / 2
         return loss, logits
-

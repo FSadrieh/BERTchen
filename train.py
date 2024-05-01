@@ -96,15 +96,25 @@ def main(args: TrainingArgs):
             model = PretrainBERT.load_from_checkpoint(args.saved_checkpoint_path, save_hyperparameters=False)
             # we will resume via trainer.fit(ckpt_path=...)
         else:  # load only weights
-            model = PretrainBERT(**model_args, model_name_or_path=args.hf_model_name, from_scratch=args.from_scratch,)
+            model = PretrainBERT(
+                **model_args,
+                model_name_or_path=args.hf_model_name,
+                from_scratch=args.from_scratch,
+            )
             torch_load = torch.load(args.saved_checkpoint_path, map_location=torch.device("cpu"))
             model.load_state_dict(torch_load["state_dict"], strict=False)
     else:
-        model = PretrainBERT(**model_args, model_name_or_path=args.hf_model_name, from_scratch=args.from_scratch,)
+        model = PretrainBERT(**model_args, model_name_or_path=args.hf_model_name, from_scratch=args.from_scratch)
 
     # All finetuning tasks are classification tasks
-    if "classification" in args.task:
-        model = FinetuneBERT(model=model.model, **model_args, num_labels=args.num_labels, classifier_dropout=args.classifier_dropout)
+    if args.task != "pretraining":
+        model = FinetuneBERT(
+            model=model.model,
+            **model_args,
+            num_labels=args.num_labels,
+            classifier_dropout=args.classifier_dropout,
+            task_type=args.task,
+        )
 
     tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(args.tokenizer_path or args.hf_model_name, use_fast=True)
     if not args.resume:
