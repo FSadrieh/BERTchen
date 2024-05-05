@@ -244,9 +244,11 @@ class SCBERT(L.LightningModule):
         self.eval_interval = eval_interval
         self.epsilon = epsilon
 
+        self.metric = load("accuracy")
+
     def forward(self, input_ids, attention_mask, labels, token_type_ids=None):
         output = self.model(input_ids, attention_mask, token_type_ids=token_type_ids)
-        return self.head(output, labels=labels, start_positions=start_positions, end_positions=end_positions)
+        return self.head(output, labels)
 
     def training_step(self, batch, batch_idx):
         loss, logits = self(**batch)
@@ -255,8 +257,10 @@ class SCBERT(L.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         loss, logits = self(**batch)
-        self.metric.compute
         self.log("val/loss", loss, on_step=False, on_epoch=True, sync_dist=True)
+        predictions = torch.argmax(logits, axis=1)
+        accuracy = self.metric.compute(predictions=predictions, references=batch["labels"])
+        self.log("val/accuracy", accuracy, on_step=False, on_epoch=True, sync_dist=True)
 
     def configure_optimizers(self):
         return configure_optimizer(
