@@ -1,4 +1,58 @@
 from typing import Any, Hashable
+from print_on_steroids import logger
+from torch.optim import AdamW
+from transformers.optimization import get_scheduler
+
+
+def configure_optimizer(
+    params: dict, global_rank: int, learning_rate, weight_decay, warmup_period, beta1, beta2, epsilon, lr_schedule, trainer
+) -> dict:
+    if global_rank == 0:
+        logger.info(f"Using lr: {learning_rate}, weight decay: {weight_decay} and warmup steps: {warmup_period}")
+
+    named_parameters = list(params)
+
+    ### Filter out parameters that are not optimized (requires_grad == False)
+    optimized_named_parameters = [(n, p) for n, p in named_parameters if p.requires_grad]
+
+    ### Do not include LayerNorm and bias terms for weight decay https://forums.fast.ai/t/is-weight-decay-applied-to-the-bias-term/73212/6
+    no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
+    optimizer_parameters = [
+        {
+            "params": [p for n, p in optimized_named_parameters if not any(nd in n for nd in no_decay)],
+            "weight_decay": weight_decay,
+        },
+        {
+            "params": [p for n, p in optimized_named_parameters if any(nd in n for nd in no_decay)],
+            "weight_decay": 0.0,
+        },
+    ]
+    optimizer = AdamW(
+        optimizer_parameters,
+        learning_rate,
+        betas=(beta1, beta2),
+        eps=epsilon,  # You can also tune this
+    )
+
+    scheduler_name = lr_schedule
+    if scheduler_name == "constant" and warmup_period > 0:
+        scheduler_name += "_with_warmup"
+    scheduler = get_scheduler(
+        scheduler_name,
+        optimizer,
+        num_warmup_steps=int(warmup_period),
+        num_training_steps=trainer.max_steps,
+    )
+
+    return {
+        "optimizer": optimizer,
+        "lr_scheduler": {"scheduler": scheduler, "interval": "step", "frequency": 1},
+    }
+
+
+##############################
+# Template pre-defined utils #
+##############################
 
 
 def find_multiple(n: int, k: int) -> int:

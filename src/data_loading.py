@@ -8,7 +8,7 @@ from torch.utils.data.dataloader import DataLoader
 from transformers import PreTrainedTokenizerFast, DataCollatorWithPadding
 
 from dlib.frameworks.pytorch import get_rank
-from src.custom_data_collator import PretrainingDataCollator
+from src.custom_data_collator import QADataCollator
 
 if TYPE_CHECKING:
     from train import TrainingArgs
@@ -52,9 +52,15 @@ class LMDataModule(L.LightningDataModule):
         pad_to_multiple_of = 8 if self.args.precision in ["16-mixed", "bf16-mixed"] else None
 
         if self.args.task == "pretraining":
-            self.data_collator = PretrainingDataCollator(
+            self.data_collator = DataCollatorWithPadding(
                 tokenizer=self.tokenizer,
                 mlm=True,
+                pad_to_multiple_of=pad_to_multiple_of,
+            )
+        elif self.args.task == "question-answering":
+            self.data_collator = QADataCollator(
+                tokenizer=self.tokenizer,
+                padding=True,
                 pad_to_multiple_of=pad_to_multiple_of,
             )
         else:

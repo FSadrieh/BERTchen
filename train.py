@@ -21,7 +21,7 @@ from src.helpers import (
     check_checkpoint_path_for_wandb,
     check_for_wandb_checkpoint_and_download_if_necessary,
 )
-from src.model import PretrainBERT, FinetuneBERT
+from src.model import PretrainBERT, QABERT, SCBERT
 
 WANDB_PROJECT = "bert-pretraining"
 WANDB_ENTITY = "raphael-team"
@@ -106,14 +106,18 @@ def main(args: TrainingArgs):
     else:
         model = PretrainBERT(**model_args, model_name_or_path=args.hf_model_name, from_scratch=args.from_scratch)
 
-    # All finetuning tasks are classification tasks
-    if args.task != "pretraining":
-        model = FinetuneBERT(
+    if args.task == "question-answering":
+        model = QABERT(
+            model=model.model,
+            **model_args,
+            num_labels=args.num_labels,
+        )
+    elif args.task == "sequence-classifcation":
+        model = SCBERT(
             model=model.model,
             **model_args,
             num_labels=args.num_labels,
             classifier_dropout=args.classifier_dropout,
-            task_type=args.task,
         )
 
     tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(args.tokenizer_path or args.hf_model_name, use_fast=True)

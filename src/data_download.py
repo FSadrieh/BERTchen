@@ -149,7 +149,6 @@ def load_right_dataset(
             streaming=stream,
             num_proc=None if stream else args.processes,
         )
-        dataset = dataset.remove_columns(["id"])
         train_val_datasets = (dataset, None)
 
     elif dataset_name in ["germeval_A", "germeval_B"]:
@@ -245,12 +244,19 @@ def make_tokenize_function(tokenizer, task_type, max_seq_length=None, truncate=T
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
         )
-        start_positions, end_positions = _get_labels_for_qa(tokenized, examples["answers"])
+        start_positions, end_positions, ids, answers, context = _get_labels_for_qa(
+            tokenized, examples["answers"], examples["id"], examples["context"]
+        )
+
         return {
+            "id": ids,
             "input_ids": tokenized["input_ids"],
             "attention_mask": tokenized["attention_mask"],
             "start_positions": start_positions,
             "end_positions": end_positions,
+            "answers": answers,
+            "context": context,
+            "offset_mapping": tokenized["offset_mapping"],
         }
 
     def pre_training_tokenize_function(examples):
@@ -269,14 +275,20 @@ def make_tokenize_function(tokenizer, task_type, max_seq_length=None, truncate=T
     return pre_training_tokenize_function
 
 
-def _get_labels_for_qa(inputs, answers):
+def _get_labels_for_qa(inputs, answers, ids, context):
     # This function is inspired from https://huggingface.co/learn/nlp-course/chapter7/7
 
     start_positions = []
     end_positions = []
+    output_ids = []
+    output_answers = []
+    output_context = []
     for i, offset in enumerate(inputs["offset_mapping"]):
         sample_idx = inputs["overflow_to_sample_mapping"][i]
+        output_ids.append(ids[sample_idx])
+        output_context.append(context[sample_idx])
         answer = answers[sample_idx]
+        output_answers.append({"answers": answer, "id": str(ids[sample_idx])})
         start_char = answer["answer_start"][0]
         end_char = answer["answer_start"][0] + len(answer["text"][0].strip())
         sequence_ids = inputs.sequence_ids(i)
@@ -306,7 +318,7 @@ def _get_labels_for_qa(inputs, answers):
                 idx -= 1
             end_positions.append(idx + 1)
 
-    return start_positions, end_positions
+    return start_positions, end_positions, output_ids, output_answers, output_context
 
 
 def make_group_text_function(max_seq_length):

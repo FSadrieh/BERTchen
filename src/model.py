@@ -1,13 +1,15 @@
 import lightning as L
-from print_on_steroids import logger
-from torch.optim import AdamW
 import torch.nn as nn
+from evaluate import load
 from transformers.modeling_utils import PreTrainedModel
 from transformers.models.auto.configuration_auto import AutoConfig
 from transformers.models.auto.modeling_auto import AutoModel
-from transformers.optimization import get_scheduler
 from transformers.models.bert.modeling_bert import BertOnlyMLMHead
 from transformers.modeling_outputs import BaseModelOutputWithPoolingAndCrossAttentions
+import collections
+import torch
+
+from src.utils import configure_optimizer
 
 
 class PretrainBERT(L.LightningModule):
@@ -63,52 +65,21 @@ class PretrainBERT(L.LightningModule):
         self.log("val/loss", loss, on_step=False, on_epoch=True, sync_dist=True)
 
     def configure_optimizers(self):
-        if self.global_rank == 0:
-            logger.info(
-                f"Using lr: {self.learning_rate}, weight decay: {self.weight_decay} and warmup steps: {self.warmup_period}"
-            )
-
-        named_parameters = list(self.model.named_parameters() + self.head.named_parameters())
-
-        ### Filter out parameters that are not optimized (requires_grad == False)
-        optimized_named_parameters = [(n, p) for n, p in named_parameters if p.requires_grad]
-
-        ### Do not include LayerNorm and bias terms for weight decay https://forums.fast.ai/t/is-weight-decay-applied-to-the-bias-term/73212/6
-        no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
-        optimizer_parameters = [
-            {
-                "params": [p for n, p in optimized_named_parameters if not any(nd in n for nd in no_decay)],
-                "weight_decay": self.weight_decay,
-            },
-            {
-                "params": [p for n, p in optimized_named_parameters if any(nd in n for nd in no_decay)],
-                "weight_decay": 0.0,
-            },
-        ]
-        optimizer = AdamW(
-            optimizer_parameters,
+        return configure_optimizer(
+            self.model.named_parameters() + self.head.named_parameters(),
+            self.global_rank,
             self.learning_rate,
-            betas=(self.beta1, self.beta2),
-            eps=self.epsilon,  # You can also tune this
+            self.weight_decay,
+            self.warmup_period,
+            self.beta1,
+            self.beta2,
+            self.epsilon,
+            self.lr_schedule,
+            self.trainer,
         )
 
-        scheduler_name = self.lr_schedule
-        if scheduler_name == "constant" and self.warmup_period > 0:
-            scheduler_name += "_with_warmup"
-        scheduler = get_scheduler(
-            scheduler_name,
-            optimizer,
-            num_warmup_steps=int(self.warmup_period),
-            num_training_steps=self.trainer.max_steps,
-        )
 
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {"scheduler": scheduler, "interval": "step", "frequency": 1},
-        }
-
-
-class FinetuneBERT(L.LightningModule):
+class QABERT(L.LightningModule):
     def __init__(
         self,
         model: AutoModel,
@@ -120,8 +91,6 @@ class FinetuneBERT(L.LightningModule):
         warmup_period: int,
         eval_interval: int,
         num_labels: int,
-        classifier_dropout: float,
-        task_type: str,
         epsilon: float = 1e-8,
         save_hyperparameters: bool = True,
     ) -> None:
@@ -130,10 +99,8 @@ class FinetuneBERT(L.LightningModule):
             self.save_hyperparameters(ignore=["save_hyperparameters"])
 
         self.model = model
-        if task_type == "sequence-classification":
-            self.head = SequenceClsHead(model.config.hidden_size, num_labels, classifier_dropout)
-        else:
-            self.head = QuestionAnsweringHead(model.config.hidden_size, num_labels)
+        self.head = QuestionAnsweringHead(model.config.hidden_size, num_labels)
+        self.metric = load("squad")
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.beta1 = beta1
@@ -143,81 +110,85 @@ class FinetuneBERT(L.LightningModule):
         self.eval_interval = eval_interval
         self.epsilon = epsilon
 
-    def forward(self, input_ids, attention_mask, labels=None, token_type_ids=None, start_positions=None, end_positions=None):
+    def forward(self, input_ids, attention_mask, start_positions, end_positions, token_type_ids=None):
         output = self.model(input_ids, attention_mask, token_type_ids=token_type_ids)
-        return self.head(output, labels=labels, start_positions=start_positions, end_positions=end_positions)
+        return self.head(output, start_positions=start_positions, end_positions=end_positions)
 
     def training_step(self, batch, batch_idx):
-        loss, logits = self(**batch)
+        loss, __ = self(**batch["input"])
         self.log("train/loss", loss, on_step=True, on_epoch=False)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        loss, logits = self(**batch)
+        loss, start_logits, end_logits = self(**batch["input"])
         self.log("val/loss", loss, on_step=False, on_epoch=True, sync_dist=True)
+        # We want to restore the predictions to the original format {'prediction_text': , 'id': }
+        prediction = self.compute_prediction(start_logits, end_logits, batch["ids"], batch["context"], batch["offset_mapping"])
+        # The answer has the format {'answers': {'answer_start': , 'text': }, 'id': }
+        answers = batch["answers"]
+        results = self.metric.compute(predictions=prediction, references=answers)
+        self.log("val/f1", results["f1"], on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/exact_match", results["exact_match"], on_step=False, on_epoch=True, sync_dist=True)
+
+    def compute_prediction(self, start_logits, end_logits, ids, contexts, offset_mapping, n_best=20, max_answer_length=30):
+        # The code is adapted from the huggingface guide to QA https://huggingface.co/learn/nlp-course/chapter7/7
+        example_to_features = collections.defaultdict(list)
+        for idx, example_id in enumerate(ids):
+            example_to_features[example_id].append(idx)
+
+        predicted_answers = []
+        for example_id, context in zip(ids, contexts):
+            answers = []
+
+            # Loop through all features associated with that example
+            for feature_index in example_to_features[example_id]:
+                start_logit = start_logits[feature_index]
+                end_logit = end_logits[feature_index]
+                offsets = offset_mapping[feature_index]
+
+                start_indexes = torch.argsort(start_logit)[-n_best - 1 :].tolist()
+                end_indexes = torch.argsort(end_logit)[-n_best - 1 :].tolist()
+                for start_index in start_indexes:
+                    for end_index in end_indexes:
+                        # Skip answers that are not fully in the context
+                        try:
+                            if offsets[start_index] is None or offsets[end_index] is None:
+                                continue
+                        except IndexError:
+                            # This happens when we use padding
+                            continue
+                        # Skip answers with a length that is either < 0 or > max_answer_length
+                        if end_index < start_index or end_index - start_index + 1 > max_answer_length:
+                            continue
+
+                        answer = {
+                            "text": context[offsets[start_index][0] : offsets[end_index][1]],
+                            "logit_score": start_logit[start_index] + end_logit[end_index],
+                        }
+                        answers.append(answer)
+
+            # Select the answer with the best score
+            if len(answers) > 0:
+                best_answer = max(answers, key=lambda x: x["logit_score"])
+                predicted_answers.append({"prediction_text": best_answer["text"], "id": str(example_id)})
+            else:
+                predicted_answers.append({"prediction_text": "", "id": str(example_id)})
+
+        return predicted_answers
 
     def configure_optimizers(self):
-        if self.global_rank == 0:
-            logger.info(
-                f"Using lr: {self.learning_rate}, weight decay: {self.weight_decay} and warmup steps: {self.warmup_period}"
-            )
-
-        named_parameters = list(self.head.cls.named_parameters())
-
-        ### Filter out parameters that are not optimized (requires_grad == False)
-        optimized_named_parameters = [(n, p) for n, p in named_parameters if p.requires_grad]
-
-        ### Do not include LayerNorm and bias terms for weight decay https://forums.fast.ai/t/is-weight-decay-applied-to-the-bias-term/73212/6
-        no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
-        optimizer_parameters = [
-            {
-                "params": [p for n, p in optimized_named_parameters if not any(nd in n for nd in no_decay)],
-                "weight_decay": self.weight_decay,
-            },
-            {
-                "params": [p for n, p in optimized_named_parameters if any(nd in n for nd in no_decay)],
-                "weight_decay": 0.0,
-            },
-        ]
-        optimizer = AdamW(
-            optimizer_parameters,
+        return configure_optimizer(
+            self.head.cls.named_parameters(),
+            self.global_rank,
             self.learning_rate,
-            betas=(self.beta1, self.beta2),
-            eps=self.epsilon,  # You can also tune this
+            self.weight_decay,
+            self.warmup_period,
+            self.beta1,
+            self.beta2,
+            self.epsilon,
+            self.lr_schedule,
+            self.trainer,
         )
-
-        scheduler_name = self.lr_schedule
-        if scheduler_name == "constant" and self.warmup_period > 0:
-            scheduler_name += "_with_warmup"
-        scheduler = get_scheduler(
-            scheduler_name,
-            optimizer,
-            num_warmup_steps=int(self.warmup_period),
-            num_training_steps=self.trainer.max_steps,
-        )
-
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {"scheduler": scheduler, "interval": "step", "frequency": 1},
-        }
-
-
-class SequenceClsHead(nn.Module):
-    def __init__(self, hidden_size, num_labels, classifier_dropout):
-        super().__init__()
-        self.dropout = nn.Dropout(classifier_dropout)
-        self.cls = nn.Linear(hidden_size, num_labels)
-        self.loss_function = nn.CrossEntropyLoss()
-
-        self.num_labels = num_labels
-
-    def forward(
-        self, sequence_output: BaseModelOutputWithPoolingAndCrossAttentions, labels, start_positions=None, end_positions=None
-    ):
-        sequence_output = self.dropout(sequence_output.pooler_output)
-        logits = self.cls(sequence_output)
-        loss = self.loss_function(logits.view(-1, self.num_labels), labels.view(-1))
-        return loss, logits
 
 
 class QuestionAnsweringHead(nn.Module):
@@ -226,9 +197,7 @@ class QuestionAnsweringHead(nn.Module):
         super().__init__()
         self.qa = nn.Linear(hidden_size, num_labels)
 
-    def forward(
-        self, sequence_output: BaseModelOutputWithPoolingAndCrossAttentions, start_positions, end_positions, labels=None
-    ):
+    def forward(self, sequence_output: BaseModelOutputWithPoolingAndCrossAttentions, start_positions, end_positions):
         logits = self.qa(sequence_output.last_hidden_state)
         start_logits, end_logits = logits.split(1, dim=-1)
         start_logits = start_logits.squeeze(-1).contiguous()
@@ -241,4 +210,80 @@ class QuestionAnsweringHead(nn.Module):
         start_loss = loss_fct(start_logits, start_positions)
         end_loss = loss_fct(end_logits, end_positions)
         loss = (start_loss + end_loss) / 2
+        return loss, start_logits, end_logits
+
+
+class SCBERT(L.LightningModule):
+    def __init__(
+        self,
+        model: AutoModel,
+        learning_rate: float,
+        weight_decay: float,
+        beta1: float,
+        beta2: float,
+        lr_schedule: str,
+        warmup_period: int,
+        eval_interval: int,
+        num_labels: int,
+        classifier_dropout: float,
+        epsilon: float = 1e-8,
+        save_hyperparameters: bool = True,
+    ) -> None:
+        super().__init__()
+        if save_hyperparameters:
+            self.save_hyperparameters(ignore=["save_hyperparameters"])
+
+        self.model = model
+        self.head = SequenceClsHead(model.config.hidden_size, num_labels, classifier_dropout)
+        self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.lr_schedule = lr_schedule
+        self.warmup_period = warmup_period
+        self.eval_interval = eval_interval
+        self.epsilon = epsilon
+
+    def forward(self, input_ids, attention_mask, labels, token_type_ids=None):
+        output = self.model(input_ids, attention_mask, token_type_ids=token_type_ids)
+        return self.head(output, labels=labels, start_positions=start_positions, end_positions=end_positions)
+
+    def training_step(self, batch, batch_idx):
+        loss, logits = self(**batch)
+        self.log("train/loss", loss, on_step=True, on_epoch=False)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        loss, logits = self(**batch)
+        self.metric.compute
+        self.log("val/loss", loss, on_step=False, on_epoch=True, sync_dist=True)
+
+    def configure_optimizers(self):
+        return configure_optimizer(
+            self.head.cls.named_parameters(),
+            self.global_rank,
+            self.learning_rate,
+            self.weight_decay,
+            self.warmup_period,
+            self.beta1,
+            self.beta2,
+            self.epsilon,
+            self.lr_schedule,
+            self.trainer,
+        )
+
+
+class SequenceClsHead(nn.Module):
+    def __init__(self, hidden_size, num_labels, classifier_dropout):
+        super().__init__()
+        self.dropout = nn.Dropout(classifier_dropout)
+        self.cls = nn.Linear(hidden_size, num_labels)
+        self.loss_function = nn.CrossEntropyLoss()
+
+        self.num_labels = num_labels
+
+    def forward(self, sequence_output: BaseModelOutputWithPoolingAndCrossAttentions, labels):
+        sequence_output = self.dropout(sequence_output.pooler_output)
+        logits = self.cls(sequence_output)
+        loss = self.loss_function(logits.view(-1, self.num_labels), labels.view(-1))
         return loss, logits
