@@ -5,6 +5,7 @@ from transformers.models.auto.configuration_auto import AutoConfig
 from transformers.models.auto.modeling_auto import AutoModel
 from transformers.models.bert.modeling_bert import BertOnlyMLMHead
 from transformers.modeling_outputs import BaseModelOutputWithPoolingAndCrossAttentions
+from transformers.modeling_utils import PreTrainedModel
 import collections
 import torch
 
@@ -34,9 +35,20 @@ class PretrainBERT(L.LightningModule):
 
         if from_scratch:
             config.vocab_size = tokenizer_vocab_size
-            self.model = AutoModel.from_config(config=config)
+
+        if model_name_or_path.startswith("mosaic"):
+            from src.mosaic_bert import BertModel
+
+            self.model: PreTrainedModel = (
+                BertModel.from_pretrained(model_name_or_path, config=config) if not from_scratch else BertModel(config=config)
+            )
         else:
-            self.model = AutoModel.from_pretrained(model_name_or_path, config=config)
+            self.model: PreTrainedModel = (
+                AutoModel.from_pretrained(model_name_or_path, config=config)
+                if not from_scratch
+                else AutoModel.from_config(config=config)
+            )
+
         self.head = BertOnlyMLMHead(config)
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
