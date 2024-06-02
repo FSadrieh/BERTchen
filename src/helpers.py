@@ -72,7 +72,11 @@ class ProgressMetricCallback(Callback):
 
     @rank_zero_only
     def on_train_batch_end(self, trainer: Trainer, pl_module: Any, outputs: STEP_OUTPUT, batch: Any, batch_idx: int) -> None:
-        B, T = batch["input_ids"].shape
+        try:
+            B, T = batch["input_ids"].shape
+        except KeyError:
+            # Needs to be adapted to germanquad
+            B, T = batch["input"]["input_ids"].shape
         self.samples_processed += B * trainer.num_devices
         self.tokens_processed += B * T * trainer.num_devices
 

@@ -5,7 +5,7 @@ from pathlib import Path
 import torch
 import wandb
 from lightning import Trainer, seed_everything
-from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
+from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint, EarlyStopping
 from lightning.pytorch.loggers.wandb import WandbLogger
 from lightning.pytorch.plugins.environments import LightningEnvironment, SLURMEnvironment
 from print_on_steroids import graceful_exceptions, logger
@@ -77,6 +77,7 @@ def main(args: TrainingArgs):
 
     ################# Construct model ##############
 
+    tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(args.tokenizer_path or args.hf_model_name, use_fast=True)
     # Resume from checkpoint if specified
     model_args = dict(
         learning_rate=args.learning_rate,
@@ -104,7 +105,7 @@ def main(args: TrainingArgs):
             torch_load = torch.load(args.saved_checkpoint_path, map_location=torch.device("cpu"))
             model.load_state_dict(torch_load["state_dict"], strict=False)
     else:
-        model = PretrainBERT(**model_args, model_name_or_path=args.hf_model_name, from_scratch=args.from_scratch)
+        model = PretrainBERT(**model_args, model_name_or_path=args.hf_model_name, from_scratch=args.from_scratch, tokenizer_vocab_size=tokenizer.vocab_size)
 
     if args.task == "question-answering":
         model = QABERT(
@@ -112,7 +113,7 @@ def main(args: TrainingArgs):
             **model_args,
             num_labels=args.num_labels,
         )
-    elif args.task == "sequence-classifcation":
+    elif args.task == "sequence-classification":
         model = SCBERT(
             model=model.model,
             **model_args,
@@ -120,7 +121,6 @@ def main(args: TrainingArgs):
             classifier_dropout=args.classifier_dropout,
         )
 
-    tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(args.tokenizer_path or args.hf_model_name, use_fast=True)
     if not args.resume:
         pretrained_vocab_size = model.model.get_input_embeddings().weight.shape[0]
         if len(tokenizer) != pretrained_vocab_size:
@@ -150,7 +150,8 @@ def main(args: TrainingArgs):
         auto_insert_metric_name=False,
         every_n_train_steps=int(args.save_interval),
     )
-    callbacks = [checkpoint_callback, wandb_disk_cleanup_callback, lr_monitor, ProgressMetricCallback()]
+    early_stopping_callback = EarlyStopping(monitor="val/loss", min_delta=0.00, patience=args.patience)
+    callbacks = [checkpoint_callback, wandb_disk_cleanup_callback, lr_monitor, ProgressMetricCallback(), early_stopping_callback]
     if args.accelerator == "cuda":
         callbacks.append(CUDAMetricsCallback())
 
@@ -180,6 +181,8 @@ def main(args: TrainingArgs):
         fast_dev_run=args.fast_dev_run,
         limit_val_batches=None if args.eval_samples == -1 else (args.eval_samples // args.eval_micro_batch_size),
         inference_mode=not args.compile,  # inference_mode for val/test and PyTorch 2.0 compiler don't like each other
+        limit_train_batches=None if args.steps_per_seq_length == -1 else args.steps_per_seq_length,
+        reload_dataloaders_every_n_epochs= args.reload_dataloaders_every_n_epochs
     )
 
     if current_process_rank == 0:

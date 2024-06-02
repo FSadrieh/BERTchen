@@ -42,7 +42,7 @@ class TrainingArgs:
     base_unit: Literal["samples", "tokens", "optimizer-steps", "iters"] = field(default="optimizer-steps")
     "Unit of all training constants. They will be converted to optimizer_steps in __post_init__."
 
-    training_goal: int = field(default=100_000)
+    training_goal: int = field(default=50_000)
     eval_interval: float = field(default=0.1)
     "Interval between evaluations. If < 1, use as percentage of training_goal."
 
@@ -87,9 +87,10 @@ class TrainingArgs:
         help="Distributed training strategy to use. If `auto`, will select automatically (no distributed strategy is used when using a single device).",
         aliases="--ds",
     )
-    micro_batch_size: int = field(default=None, alias="--mb")
+    micro_batch_size: list[int] = field(default=None, alias="--mb")
     """If None, use batch_size // num_devices. This is the batch size per device, not the total batch size.
-    You should tune this so that you do not get GPU RAM OOM errors. We automatically calculate the gradient accumulation steps to achieve your desired `batch_size`."""
+    You should tune this so that you do not get GPU RAM OOM errors. We automatically calculate the gradient accumulation steps to achieve your desired `batch_size`.
+    For each dataset you can have one batch size. Specify them for the datasets in the order they are loaded."""
 
     eval_micro_batch_size: int = field(default=None)
     "If None, use micro_batch_size."
@@ -137,15 +138,28 @@ class TrainingArgs:
     fast_dev_run: bool = field(default=False)
     "Do fast run through training and validation with reduced sizes."
 
+    patience: int = field(default=5)
+    "Early stopping patience."
+
     ###############################################
     ###### Efficient Bert Pretraining Params ######
     ###############################################
 
-    task: Literal["pretraining", "sequence-classifcation", "question-answering"] = field(default="pretraining")
+    task: Literal["pretraining", "sequence-classification", "question-answering"] = field(default="pretraining")
 
     classifier_dropout: float = field(default=0.1)
 
     num_labels: int = field(default=2)
+
+    mlm_probability: float = field(default=0.15)
+
+    steps_per_seq_length: float = field(default=-1)
+    "If -1, do not limit the number of steps per sequence length."
+
+    reload_dataloaders_every_n_epochs: int = field(default=0)
+    "If > 0, reload the dataloaders every n epochs."
+
+    use_n_training_datasets: int = field(default=1, alias="--untd")
 
     def __post_init__(self):
         assert self.num_devices > 0
@@ -154,7 +168,7 @@ class TrainingArgs:
             self.micro_batch_size = self.batch_size // self.num_devices
             assert self.batch_size % self.num_devices == 0
 
-        self.iter_batch_size = self.micro_batch_size * self.num_devices
+        self.iter_batch_size = self.micro_batch_size[-1] * self.num_devices
 
         if self.eval_interval < 1:
             self.eval_interval = int(self.eval_interval * self.training_goal)
@@ -167,18 +181,18 @@ class TrainingArgs:
         elif self.lr_decay_period < 1:
             self.lr_decay_period = int(self.lr_decay_period * self.training_goal)
 
-        assert self.batch_size % self.micro_batch_size == 0
+        assert self.batch_size % self.micro_batch_size[-1] == 0
         if self.gradient_accumulation_steps == -1:
             self.gradient_accumulation_steps = self.batch_size // self.iter_batch_size
         assert self.gradient_accumulation_steps > 0
-        assert self.batch_size == self.micro_batch_size * self.num_devices * self.gradient_accumulation_steps
+        assert self.batch_size == self.micro_batch_size[-1] * self.num_devices * self.gradient_accumulation_steps
 
         if self.tokenizer_path is None:
             self.tokenizer_path = self.hf_model_name
             assert self.hf_model_name is not None
 
         if self.eval_micro_batch_size is None:
-            self.eval_micro_batch_size = self.micro_batch_size
+            self.eval_micro_batch_size = self.micro_batch_size[-1]
 
         # Calculate training constants
         if self.base_unit == "samples":

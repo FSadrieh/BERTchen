@@ -5,7 +5,7 @@ import datasets
 import lightning as L
 from print_on_steroids import logger
 from torch.utils.data.dataloader import DataLoader
-from transformers import PreTrainedTokenizerFast, DataCollatorWithPadding
+from transformers import PreTrainedTokenizerFast, DataCollatorWithPadding, DataCollatorForLanguageModeling
 
 from dlib.frameworks.pytorch import get_rank
 from src.custom_data_collator import QADataCollator
@@ -48,14 +48,29 @@ class LMDataModule(L.LightningDataModule):
             name=str(self.data_dir).replace("/", "_"),
             num_proc=self.args.preprocessing_workers,
         )
+        self.train_dataset = train_val_datasets["train"]
+        self.val_dataset = train_val_datasets["val"]
+
+        if self.args.use_n_training_datasets > 1:
+            self.train_datasets = []
+            for i in range(self.args.use_n_training_datasets - 1):
+                train_file = str(self.data_dir / f"train_{i}.jsonl")
+                train_dataset = datasets.load_dataset(
+                    "json",
+                    data_files={"train": train_file},
+                    name=str(self.data_dir).replace("/", "_"),
+                    num_proc=self.args.preprocessing_workers,
+                )
+                self.train_datasets.append(train_dataset["train"])
 
         pad_to_multiple_of = 8 if self.args.precision in ["16-mixed", "bf16-mixed"] else None
 
         if self.args.task == "pretraining":
-            self.data_collator = DataCollatorWithPadding(
+            self.data_collator = DataCollatorForLanguageModeling(
                 tokenizer=self.tokenizer,
                 mlm=True,
                 pad_to_multiple_of=pad_to_multiple_of,
+                mlm_probability=self.args.mlm_probability,
             )
         elif self.args.task == "question-answering":
             self.data_collator = QADataCollator(
@@ -70,12 +85,8 @@ class LMDataModule(L.LightningDataModule):
                 pad_to_multiple_of=pad_to_multiple_of,
             )
 
-        self.train_dataset = train_val_datasets["train"]
-        self.val_dataset = train_val_datasets["val"]
-
     def train_dataloader(self):
         common_args = dict(
-            batch_size=self.args.micro_batch_size,
             num_workers=self.args.workers,
             persistent_workers=(
                 True if self.args.workers > 0 else False
@@ -83,7 +94,14 @@ class LMDataModule(L.LightningDataModule):
             pin_memory=True,
             shuffle=True,
         )
-        return DataLoader(self.train_dataset, collate_fn=self.data_collator, **common_args)
+        current_epoch = self.trainer.current_epoch
+        if current_epoch < self.args.use_n_training_datasets -1:
+            train_dataset = self.train_datasets[current_epoch]
+            batch_size = self.args.micro_batch_size[current_epoch]
+            logger.info(f"Switched to dataset {current_epoch} with a micro-batch size {batch_size}. It has a length of {len(train_dataset)} and sequence length of {len(train_dataset[0]['input_ids'])}", rank0_only=True)
+            return DataLoader(train_dataset, collate_fn=self.data_collator, batch_size=batch_size, **common_args)
+        train_dataset = self.train_dataset.shuffle(seed=self.trainer.current_epoch)
+        return DataLoader(train_dataset, collate_fn=self.data_collator, batch_size=self.args.micro_batch_size[-1], **common_args)
 
     def val_dataloader(self):
         common_args = dict(

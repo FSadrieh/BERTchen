@@ -4,10 +4,6 @@ This script allows you to download and preprocess datasets for language modeling
 Example command to download cc100 for German:
 python preprocess_data.py --lg de --dataset cc100 --out_dir ./data/cc100/ --processes 8
 
-
-Example command to download cc100 for German using streaming mode for HF datasets (faster, requires less RAM) and cleaning up caches:
-python preprocess_data.py --lg de --dataset cc100 --out_dir ./data/cc100/ --processes 8 --stream --stream_shuffle_buffer_size 10_000 --conserve_disk_space
-
 Inspiration from lit-gpt and gpt-neox.
 """
 
@@ -29,6 +25,7 @@ from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 from utils import wait_for_debugger
 
+DEFAULT_DATA_LOCATION = "/hpi/fs00/share/fg-demelo/small-language-models/data"
 
 DATASET_TO_TASK = {
     "c4": "pre-training",
@@ -47,7 +44,7 @@ class Args:
     dataset: Literal["c4", "cc100", "oscar2023", "germanquad", "germeval_A", "germeval_B"] = field(default="oscar2023")
     "HF dataset"
 
-    max_train_size: int = field(default=50_000)
+    max_train_size: int = field(default=-1)
     "Maximum number of train documents to write to disk. Use to limit very large datasets that you will not exhaust during training anyway. Use -1 to disable."
 
     dev_size: int = field(default=2_500)
@@ -65,15 +62,9 @@ class Args:
     conserve_disk_space: bool = field(default=False, alias="--disk_space")
     "Disable all HF caching and cleanup download caches to conserve disk space."
 
-    stream_shuffle_buffer_size: int = field(default=100_000)
-    """Buffer size for shuffling datasets before splitting in streaming mode.
-    The entire buffer will be downloaded before shuffling.
-    You also need to have enough RAM if you set this to a large value If -1, set to max_train_size."""
-
     pre_discard_factor: float = field(default=None)
     """Percentage of the dataset to discard before any processing.
-    Useful for speeding up processing of huge datasets that are not fully needed.
-    Not needed if you use --stream."""
+    Useful for speeding up processing of huge datasets that are not fully needed."""
 
     max_seq_length: int = field(default=512)
     "Maximum sequence length for tokenization."
@@ -81,128 +72,136 @@ class Args:
     debug: bool = field(default=False)
     "Wait for debugger to attach."
 
+    only_download: bool = field(default=False)
+    "Only download the dataset, do not process it."
+
+    data_location: str = field(default="default")
+    "We first check if we have downloaded the data already in this location, before we download it again."
+
+    tokenizer: str = field(default="google-bert/bert-base-cased")
+    "HuggingFace tokenizer identifier."
+
+    create_n_training_datasets: int = field(default=1, alias="--cntd")
+    "Create n training datasets from the same source dataset. Each training dataset will have the double the sequence length of the prior one. Only used if task is pre-training."
+
+
+def load_and_process_germaneval(
+    tmp_cache_dir: str, dataset_name: str, processes: int
+) -> tuple[datasets.Dataset, datasets.Dataset]:
+    # Downloading this dataset is different as it is not available on HF
+    if not (os.path.exists("data/dev_v1.4.tsv") and os.path.exists("data/train_v1.4.tsv")):
+        raise FileNotFoundError(
+            "Please download the GermEval dataset from https://sites.google.com/view/germeval2017-absa/data and place it in the data/ folder."
+        )
+    column_names = ["url", "text", "relevance", "sentiment", "aspect"]
+    train_dataset = load_dataset(
+        "csv",
+        split="train",
+        data_files="data/train_v1.4.tsv",
+        cache_dir=tmp_cache_dir,
+        num_proc=processes,
+        delimiter="\t",
+        column_names=column_names,
+    )
+    dev_dataset = load_dataset(
+        "csv",
+        split="train",
+        data_files="data/dev_v1.4.tsv",
+        cache_dir=tmp_cache_dir,
+        num_proc=processes,
+        delimiter="\t",
+        column_names=column_names,
+    )
+    # We need to remove the rows that contain no text
+    train_dataset = train_dataset.filter(lambda x: x["text"])
+    dev_dataset = dev_dataset.filter(lambda x: x["text"])
+    if dataset_name == "germeval_A":
+        train_dataset = train_dataset.map(lambda x: {"label": int(x["relevance"])})
+        dev_dataset = dev_dataset.map(lambda x: {"label": int(x["relevance"])})
+        train_dataset = train_dataset.remove_columns(["relevance", "sentiment", "aspect", "url"])
+        dev_dataset = dev_dataset.remove_columns(["relevance", "sentiment", "aspect", "url"])
+    else:
+
+        def _encode_sentiment(sentiment):
+            if sentiment == "positive":
+                return 2
+            if sentiment == "neutral":
+                return 1
+            return 0
+
+        train_dataset = train_dataset.map(lambda x: {"label": _encode_sentiment(x["sentiment"])})
+        dev_dataset = dev_dataset.map(lambda x: {"label": _encode_sentiment(x["sentiment"])})
+        train_dataset = train_dataset.remove_columns(["relevance", "sentiment", "aspect", "url"])
+        dev_dataset = dev_dataset.remove_columns(["relevance", "sentiment", "aspect", "url"])
+    return (train_dataset, dev_dataset)
+
+
+def process_oscar(dataset: datasets.Dataset):
+    # if dataset_name == "oscar2023":
+    # For oscar2023, we need to rename the columns to match the other datasets
+    # dataset = dataset.rename_column("content", "text")
+
+    # Filter out all samples with content warning in OSCAR
+    dataset = dataset.filter(
+        lambda x: x["meta"]["quality_warnings"] is None
+        or (
+            "noisy" not in x["meta"]["quality_warnings"]
+            and "header" not in x["meta"]["quality_warnings"]
+            and "footer" not in x["meta"]["quality_warnings"]
+            and "short_sentences" not in x["meta"]["quality_warnings"]
+            and "tiny" not in x["meta"]["quality_warnings"]
+            and "adult" not in x["meta"]["quality_warnings"]
+        ),
+    )
+    return (dataset, None)
+
 
 def load_right_dataset(
-    dataset_name: str, tmp_cache_dir: str, stream: bool, args: Args
+    dataset_name: str, tmp_cache_dir: str, data_location: str, split: str, processes: int
 ) -> tuple[datasets.Dataset, datasets.Dataset]:
+    def _load_dataset(loading_args: dict, local_path: str, hf_path: str, extra_loading_args: dict = None):
+        try:
+            return load_dataset("json", **loading_args, data_files={"train": local_path})
+        except FileNotFoundError:
+            logger.info(f"Could not find dataset in {local_path}, downloading it...")
+        if extra_loading_args:
+            loading_args.update(extra_loading_args)
+        return load_dataset(**loading_args, path=hf_path)
+
+    def _file_location(dataset_name: str):
+        return f"{DEFAULT_DATA_LOCATION}/{dataset_name}/{split}.jsonl" if data_location == "default" else data_location
+
+    default_loading_args = {
+        "split": split,
+        "cache_dir": tmp_cache_dir,
+        "num_proc": processes,
+    }
     if dataset_name == "c4":
-        dataset = load_dataset(
-            "allenai/c4",
-            "de",
-            split=args.split,
-            cache_dir=tmp_cache_dir,
-            streaming=stream,
-            num_proc=None if stream else args.processes,
-        )
-        train_val_datasets = (dataset, None)
+        extra_loading_args = {"name": "de"}
+        dataset = _load_dataset(default_loading_args, _file_location("c4"), "allenai/c4", extra_loading_args)
+        return (dataset, None)
     # The german split of c4 has about 25 million rows (18 GB)
-    elif dataset_name == "cc100":
-        if stream:
-            logger.warning("Streaming mode for cc100 might lose some sample documents.")
-            # Streaming mode is not trivial for cc100, since we need to group samples into documents.
-            # To lose no samples, we need to set batch_size=len(dataset) but this is not possible for IteratableDataset.
-            # We can accept loosing some samples by setting batch_size to a large number.
-        dataset = load_dataset(
-            "cc100",
-            lang="de",
-            split=args.split,
-            cache_dir=tmp_cache_dir,
-            streaming=stream,
-            num_proc=None if stream else args.processes,
-        )
-        train_val_datasets = (dataset, None)
+    if dataset_name == "cc100":
+        extra_loading_args = {"lang": "de"}
+        dataset = _load_dataset(default_loading_args, _file_location("cc100"), "cc100", extra_loading_args)
+        return (dataset, None)
     # The german split of oscar has about 594.7 GB
-    elif dataset_name == "oscar2023":
-        dataset = load_dataset(
-            "oscar-corpus/OSCAR-2301",
-            language="de",
-            split=args.split,
-            cache_dir=tmp_cache_dir,
-            streaming=stream,
-            token=True,
-            num_proc=None if stream else args.processes,
+    if dataset_name == "oscar2023":
+        extra_loading_args = {"token": True, "language": "de"}
+        dataset = _load_dataset(
+            default_loading_args, _file_location("oscar2023"), "oscar-corpus/OSCAR-2023", extra_loading_args
         )
+        return process_oscar(dataset)
 
-        # if dataset_name == "oscar2023":
-        # For oscar2023, we need to rename the columns to match the other datasets
-        # dataset = dataset.rename_column("content", "text")
+    if dataset_name == "germanquad":
+        dataset = _load_dataset(default_loading_args, _file_location("germanquad"), "deepset/germanquad")
+        return (dataset, None)
 
-        # Filter out all samples with content warning in OSCAR
-        dataset = dataset.filter(
-            lambda x: x["meta"]["quality_warnings"] is None
-            or (
-                "noisy" not in x["meta"]["quality_warnings"]
-                and "header" not in x["meta"]["quality_warnings"]
-                and "footer" not in x["meta"]["quality_warnings"]
-                and "short_sentences" not in x["meta"]["quality_warnings"]
-                and "tiny" not in x["meta"]["quality_warnings"]
-                and "adult" not in x["meta"]["quality_warnings"]
-            ),
-        )
-        train_val_datasets = (dataset, None)
-
-    elif dataset_name == "germanquad":
-        dataset = load_dataset(
-            "deepset/germanquad",
-            split=args.split,
-            cache_dir=tmp_cache_dir,
-            streaming=stream,
-            num_proc=None if stream else args.processes,
-        )
-        train_val_datasets = (dataset, None)
-
-    elif dataset_name in ["germeval_A", "germeval_B"]:
-        if not (os.path.exists("data/dev_v1.4.tsv") and os.path.exists("data/train_v1.4.tsv")):
-            raise FileNotFoundError(
-                "Please download the GermEval dataset from https://sites.google.com/view/germeval2017-absa/data and place it in the data/ folder."
-            )
-        column_names = ["url", "text", "relevance", "sentiment", "aspect"]
-        train_dataset = load_dataset(
-            "csv",
-            split="train",
-            data_files="data/train_v1.4.tsv",
-            cache_dir=tmp_cache_dir,
-            num_proc=args.processes,
-            delimiter="\t",
-            column_names=column_names,
-        )
-        dev_dataset = load_dataset(
-            "csv",
-            split="train",
-            data_files="data/dev_v1.4.tsv",
-            cache_dir=tmp_cache_dir,
-            num_proc=args.processes,
-            delimiter="\t",
-            column_names=column_names,
-        )
-        # We need to remove the rows that contain no text
-        train_dataset = train_dataset.filter(lambda x: x["text"])
-        dev_dataset = dev_dataset.filter(lambda x: x["text"])
-        if dataset_name == "germeval_A":
-            train_dataset = train_dataset.map(lambda x: {"label": int(x["relevance"])})
-            dev_dataset = dev_dataset.map(lambda x: {"label": int(x["relevance"])})
-            train_dataset = train_dataset.remove_columns(["relevance", "sentiment", "aspect", "url"])
-            dev_dataset = dev_dataset.remove_columns(["relevance", "sentiment", "aspect", "url"])
-        else:
-
-            def _encode_sentiment(sentiment):
-                if sentiment == "positive":
-                    return 2
-                elif sentiment == "neutral":
-                    return 1
-                else:
-                    return 0
-
-            train_dataset = train_dataset.map(lambda x: {"label": _encode_sentiment(x["sentiment"])})
-            dev_dataset = dev_dataset.map(lambda x: {"label": _encode_sentiment(x["sentiment"])})
-            train_dataset = train_dataset.remove_columns(["relevance", "sentiment", "aspect", "url"])
-            dev_dataset = dev_dataset.remove_columns(["relevance", "sentiment", "aspect", "url"])
-
-        train_val_datasets = (train_dataset, dev_dataset)
-    return train_val_datasets
+    if dataset_name in ["germeval_A", "germeval_B"]:
+        return load_and_process_germaneval(tmp_cache_dir, dataset_name, processes)
 
 
-def group_lines(args, dataset: datasets.Dataset, stream: bool = False):
+def group_lines(processes: int, dataset: datasets.Dataset):
     def _document_grouping_f(examples: Dict[str, list[str]]):
         documents = []
         current_doc = ""
@@ -214,10 +213,7 @@ def group_lines(args, dataset: datasets.Dataset, stream: bool = False):
                 current_doc += example
         return {"docs": documents}
 
-    batch_size = 16_000 if stream else len(dataset)
-    map_args = dict(batched=True, batch_size=batch_size, remove_columns=["text", "id"])
-    if not stream:
-        map_args["num_proc"] = args.processes  # stream does not support multiprocessing
+    map_args = dict(batched=True, batch_size=len(dataset), remove_columns=["text", "id"], num_proc=processes)
     dataset = dataset.map(_document_grouping_f, **map_args)
     dataset = dataset.rename_column("docs", "text")
     return dataset
@@ -260,12 +256,11 @@ def make_tokenize_function(tokenizer, task_type, max_seq_length=None, truncate=T
         }
 
     def pre_training_tokenize_function(examples):
-        text = [example.strip() + "\n" for example in examples["text"] if example != "\n"]
+        text = [example.strip() + "\n" for example in examples["text"] if example != "\n" and example != ""]
         return tokenizer(
             text,
             padding=False,
-            truncation=truncate,
-            max_length=max_seq_length,
+            add_special_tokens=False,
         )
 
     if task_type == "sequence-classification":
@@ -321,8 +316,29 @@ def _get_labels_for_qa(inputs, answers, ids, context):
     return start_positions, end_positions, output_ids, output_answers, output_context
 
 
-def make_group_text_function(max_seq_length):
+def make_group_text_function(max_seq_length, tokenizer):
     def group_texts(examples):
+        # Concatenate all texts.
+        concatenated_input_ids = []
+        for input_id in examples["input_ids"]:
+            concatenated_input_ids.extend(input_id)
+            concatenated_input_ids.append(tokenizer.sep_token_id)
+        total_length = len(concatenated_input_ids)
+        # We drop the small remainder, we could add padding if the model supported it instead of this drop, you can
+        # customize this part to your needs.
+        if total_length >= max_seq_length:
+            total_length = (total_length // max_seq_length) * max_seq_length
+        # Split by chunks of max_len.
+        result = {}
+        result["input_ids"] = [concatenated_input_ids[i : i + max_seq_length] for i in range(0, total_length, max_seq_length)]
+        result["attention_mask"] = [[1] * len(t) for t in result["input_ids"]]
+        result["token_type_ids"] = [[0] * len(t) for t in result["input_ids"]]
+        return result
+
+    return group_texts
+
+def make_different_seq_len_packing(max_seq_length):
+    def change_seq_len_packing(examples):
         # Concatenate all texts.
         concatenated_examples = {k: list(chain(*examples[k])) for k in examples.keys()}
         total_length = len(concatenated_examples[list(examples.keys())[0]])
@@ -336,14 +352,121 @@ def make_group_text_function(max_seq_length):
             for k, t in concatenated_examples.items()
         }
         return result
+    return change_seq_len_packing
 
-    return group_texts
 
+def write_to_disk(train_paragraphs, dev_paragraphs, out_dir, dev_size, part_name=None):
+    logger.info(f"Example train split data: {train_paragraphs.column_names}")
+    logger.info(f"len: {len(train_paragraphs)}")
+    logger.info("Writing data...")
+    output_dir = Path(out_dir)
+    os.makedirs(str(output_dir), exist_ok=True)
+    PERFORMANT_BUFFER_SIZE_BYTES = 1024 * 1024 * 100  # 100 MB
+    train_file_name = "train.jsonl" if part_name is None else f"train_{part_name}.jsonl"
+
+    train_fp = io.open(str(output_dir / train_file_name), "wt", buffering=PERFORMANT_BUFFER_SIZE_BYTES)
+    with jsonlines.Writer(train_fp, compact=True) as writer:
+        writer.write_all(train_paragraphs)
+    train_fp.close()
+
+    if dev_size and dev_paragraphs:
+        dev_fp = io.open(str(output_dir / "dev.jsonl"), "wt", buffering=PERFORMANT_BUFFER_SIZE_BYTES)
+        with jsonlines.Writer(dev_fp, compact=True) as writer:
+            writer.write_all(dev_paragraphs)
+        dev_fp.close()
+
+    logger.success("Done! Enjoy your data :)")
+    logger.print(output_dir)
+
+
+def process_pre_training_dataset(dataset, tokenizer, max_seq_length, task_type, processes, dev_size, max_train_size, out_dir, create_n_training_datasets):
+    processed_dataset = tokenize_dataset(dataset, tokenizer, max_seq_length, task_type, processes)
+    processed_dataset = group_text(processed_dataset, max_seq_length, tokenizer)
+    processed_dataset, total_len = shuffle_dataset_and_log_length(processed_dataset)
+    train_paragraphs, dev_paragraphs = generate_val_split(processed_dataset, total_len, dev_size)
+    if create_n_training_datasets > 1:
+        # We want to split the train_paragraphs into n datasets
+        end = len(train_paragraphs)
+        for i in range(create_n_training_datasets - 1):
+            new_max_length = max_seq_length // 2**(create_n_training_datasets - i - 1)
+            beginning = end - len(train_paragraphs) // create_n_training_datasets
+            split = train_paragraphs.select(range(beginning, end))
+            write_to_disk(change_packed_seq_len(split, new_max_length), None, out_dir, dev_size=0, part_name=i)
+            end = beginning
+        train_paragraphs = train_paragraphs.select(range(end))
+
+    train_paragraphs = cap_training_examples(train_paragraphs, max_train_size)
+    write_to_disk(train_paragraphs, dev_paragraphs, out_dir, dev_size)
+
+
+def process_fine_tuning_dataset(
+    train_val_datasets, tokenizer, max_seq_length, task_type, processes, dev_size, max_train_size, out_dir
+):
+    processed_datasets = []
+    for dataset in train_val_datasets:
+        if not dataset:
+            processed_datasets.append(None)
+            continue
+        processed_datasets.append(tokenize_dataset(dataset, tokenizer, max_seq_length, task_type, processes))
+    processed_datasets[0], total_len = shuffle_dataset_and_log_length(processed_datasets[0])
+    if processed_datasets[1] is None:
+        train_paragraphs, dev_paragraphs = generate_val_split(processed_datasets[0], total_len, dev_size)
+    else:
+        train_paragraphs = processed_datasets[0]
+        dev_paragraphs = processed_datasets[1].select(range(dev_size))
+    train_paragraphs = cap_training_examples(train_paragraphs, max_train_size)
+    write_to_disk(train_paragraphs, dev_paragraphs, out_dir, dev_size)
+
+
+def tokenize_dataset(dataset, tokenizer, max_seq_length, task_type, processes):
+    return dataset.map(
+        make_tokenize_function(tokenizer, max_seq_length=max_seq_length, task_type=task_type),
+        batch_size=1_000,
+        batched=True,
+        num_proc=processes,
+        remove_columns=dataset.column_names,
+    )
+
+
+def generate_val_split(processed_dataset, total_len, dev_size):
+    train_end_idx = total_len - dev_size
+    train_paragraphs = processed_dataset.select(range(train_end_idx))
+    dev_paragraphs = processed_dataset.select(range(train_end_idx, train_end_idx + dev_size))
+    return train_paragraphs, dev_paragraphs
+
+
+def shuffle_dataset_and_log_length(processed_dataset):
+    logger.info("Shuffling and splitting into sets...")
+    total_len = len(processed_dataset)
+    logger.info(f"Dataset len after processing: {total_len}")
+    return processed_dataset.shuffle(seed=42), total_len
+
+
+def cap_training_examples(train_paragraphs, max_train_size):
+    if max_train_size and len(train_paragraphs) > max_train_size:
+        train_paragraphs = train_paragraphs.select(range(max_train_size))
+    return train_paragraphs
+
+def group_text(processed_dataset, max_seq_length, tokenizer):
+    return processed_dataset.map(
+        make_group_text_function(max_seq_length, tokenizer),
+        batch_size=1_000,
+        batched=True,
+        remove_columns=processed_dataset.column_names,
+    )
+
+
+def change_packed_seq_len(processed_dataset, max_seq_length):
+    return processed_dataset.map(
+        make_different_seq_len_packing(max_seq_length),
+        batch_size=1_000,
+        batched=True,
+        remove_columns=processed_dataset.column_names,
+    )
 
 @graceful_exceptions()
 def main(args: Args):
-    # As long as we do not have trained our own tokenizer we are using the huggingface one
-    tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained("google-bert/bert-base-cased", use_fast=True)
+    tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(args.tokenizer, use_fast=True)
     logger.info(args)
     if args.max_train_size == -1:
         args.max_train_size = None
@@ -361,86 +484,45 @@ def main(args: Args):
         os.makedirs(tmp_cache_dir, exist_ok=True)
 
     ##### Load dataset #####
-    stream = DATASET_TO_TASK[args.dataset] == "pre-training"
-    train_val_datasets = load_right_dataset(args.dataset, tmp_cache_dir, stream, args)
+    train_val_datasets = load_right_dataset(args.dataset, tmp_cache_dir, args.data_location, args.split, args.processes)
+
+    ### Pre discard some data ###
+    if args.pre_discard_factor:
+        train_val_datasets = [
+            train_val_datasets[0]
+            .shuffle(seed=42)
+            .select(range(int((1 - args.pre_discard_factor) * len(train_val_datasets[0])))),
+            train_val_datasets[1]
+            .shuffle(seed=42)
+            .select(range(int((1 - args.pre_discard_factor) * len(train_val_datasets[1]))))
+            if train_val_datasets[1]
+            else None,
+        ]
+
+    #### Only download ####
+    if args.only_download:
+        write_to_disk(train_val_datasets[0], train_val_datasets[1], args.out_dir, args.dev_size)
+        return
 
     ##### For CC100: Group individual lines into documents #####
     train_val_datasets = (
-        (group_lines(args, train_val_datasets[0], stream), None) if args.dataset == "cc100" else train_val_datasets
+        (group_lines(args.processes, train_val_datasets[0]), None) if args.dataset == "cc100" else train_val_datasets
     )
 
-    ##### Process dataset #####
     logger.info("Starting mapping & chunking")
-    processed_datasets = []
-    for dataset in train_val_datasets:
-        if not dataset:
-            processed_datasets.append(None)
-            continue
-        processed_dataset = dataset.map(
-            make_tokenize_function(tokenizer, max_seq_length=args.max_seq_length, task_type=DATASET_TO_TASK[args.dataset]),
-            batch_size=1_000,
-            batched=True,
-            num_proc=None if stream else args.processes,
-            remove_columns=dataset.column_names,
-        )
-        logger.info("Tokenization finished!")
-        if DATASET_TO_TASK[args.dataset] == "pre-training":
-            processed_dataset = processed_dataset.map(
-                make_group_text_function(args.max_seq_length),
-                batch_size=1_000,
-                batched=True,
-                remove_columns=processed_dataset.column_names,
-            )
-        processed_datasets.append(processed_dataset)
-    logger.success("Processing finished!")
-
-    ##### Split into train/dev/test #####
-    logger.info("Shuffling and splitting into sets...")
-    if stream:
-        # Careful here, this does not truly shuffle ALL the data by default, only samples within a buffer
-        # You might have to adjust the buffer_size here depending on memory limits of your machine
-        # Then take care of true shuffling in the Dataloader
-        # Used for pretraining datasets, thus no need for handling the dev set
-        processed_dataset = processed_datasets[0]
-        args.stream_shuffle_buffer_size = None if args.stream_shuffle_buffer_size == -1 else args.stream_shuffle_buffer_size
-        logger.debug(f"Shuffling with buffer size {args.stream_shuffle_buffer_size}")
-        dataset = processed_dataset.shuffle(seed=42, buffer_size=args.stream_shuffle_buffer_size)
-
-        if args.dev_size:
-            logger.debug(f"Taking {args.dev_size} dev samples")
-            dev_paragraphs = processed_dataset.take(args.dev_size)
-            processed_dataset = processed_dataset.skip(args.dev_size)
-
-        if args.test_size:
-            logger.debug(f"Taking {args.test_size} test samples")
-            test_paragraphs = processed_dataset.take(args.test_size)
-            processed_dataset = processed_dataset.skip(args.test_size)
-
-        logger.debug(f"Taking {args.max_train_size} train samples")
-        train_paragraphs = processed_dataset.take(args.max_train_size)
-
-        logger.info(f"Example train split data: {list(train_paragraphs.take(4))}")
+    process_args = {
+        "max_seq_length": args.max_seq_length,
+        "tokenizer": tokenizer,
+        "task_type": DATASET_TO_TASK[args.dataset],
+        "processes": args.processes,
+        "dev_size": args.dev_size,
+        "max_train_size": args.max_train_size,
+        "out_dir": args.out_dir,
+    }
+    if DATASET_TO_TASK[args.dataset] == "pre-training":
+        process_pre_training_dataset(train_val_datasets[0], **process_args, create_n_training_datasets=args.create_n_training_datasets)
     else:
-        total_len = len(processed_datasets[0])
-        logger.info(f"Dataset len after processing: {total_len}")
-
-        processed_datasets[0] = processed_datasets[0].shuffle(seed=42)
-
-        if not processed_datasets[1]:
-            processed_dataset = processed_datasets[0]
-            dev_test_size = args.dev_size + (args.test_size or 0)
-            train_end_idx = total_len - dev_test_size
-            train_paragraphs = processed_dataset.select(range(train_end_idx))
-            dev_paragraphs = processed_dataset.select(range(train_end_idx, train_end_idx + args.dev_size))
-        else:
-            train_paragraphs = processed_datasets[0]
-            dev_paragraphs = processed_datasets[1].select(range(args.dev_size))
-
-        if args.max_train_size and len(train_paragraphs) > args.max_train_size:
-            train_paragraphs = train_paragraphs.select(range(args.max_train_size))
-
-        logger.info(f"Example train split data: {train_paragraphs[:4]}")
-        logger.info(f"len: {len(train_paragraphs)}")
+        process_fine_tuning_dataset(train_val_datasets, **process_args)
 
     if args.conserve_disk_space:
         logger.info("Cleaning download cache")
@@ -451,32 +533,6 @@ def main(args: Args):
             # (ok if directory has already been deleted)
             if e.errno != errno.ENOENT:
                 raise
-
-    ##### Write to disk #####
-    logger.info("Writing data...")
-    output_dir = Path(args.out_dir)
-    os.makedirs(str(output_dir), exist_ok=True)
-    PERFORMANT_BUFFER_SIZE_BYTES = 1024 * 1024 * 100  # 100 MB
-
-    train_fp = io.open(str(output_dir / "train.jsonl"), "wt", buffering=PERFORMANT_BUFFER_SIZE_BYTES)
-    with jsonlines.Writer(train_fp, compact=True) as writer:
-        writer.write_all(train_paragraphs)
-    train_fp.close()
-
-    if args.dev_size:
-        dev_fp = io.open(str(output_dir / "dev.jsonl"), "wt", buffering=PERFORMANT_BUFFER_SIZE_BYTES)
-        with jsonlines.Writer(dev_fp, compact=True) as writer:
-            writer.write_all(dev_paragraphs)
-        dev_fp.close()
-
-    if args.test_size:
-        test_fp = io.open(str(output_dir / "test.jsonl"), "wt", buffering=PERFORMANT_BUFFER_SIZE_BYTES)
-        with jsonlines.Writer(test_fp, compact=True) as writer:
-            writer.write_all(test_paragraphs)
-        test_fp.close()
-
-    logger.success("Done! Enjoy your data :)")
-    logger.print(output_dir / "train.jsonl")
 
 
 if __name__ == "__main__":
