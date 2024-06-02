@@ -95,16 +95,17 @@ class LMDataModule(L.LightningDataModule):
             ),  # https://discuss.pytorch.org/t/what-are-the-dis-advantages-of-persistent-workers/102110/10
             pin_memory=True,
             shuffle=True,
-        )
-        dataloader = DataLoader(
-            self.train_dataset,
             collate_fn=self.data_collator,
-            batch_size=self.args.micro_batch_size[-1],
-            **common_args,
         )
-        if self.use_n_training_datasets == 1 or self.iterator_idx >= self.use_n_training_datasets:
+
+        if self.use_n_training_datasets == 1 or self.iterator_idx >= len(self.train_datasets):
+            dataloader = DataLoader(
+                self.train_dataset,
+                batch_size=self.args.micro_batch_size[-1],
+                **common_args,
+            )
             logger.info(
-                f"Switched to final dataset with a micro-batch size {self.args.micro_batch_size[-1]}. It has a length of {len(train_dataset)} and sequence length of {len(train_dataset[0]['input_ids'])}",
+                f"Switched to final dataset with a micro-batch size {self.args.micro_batch_size[-1]}. It has a length of {len(self.train_dataset)} and sequence length of {len(self.train_dataset[0]['input_ids'])}",
                 rank0_only=True,
             )
             self.iterator_idx += 1
@@ -117,7 +118,12 @@ class LMDataModule(L.LightningDataModule):
             f"Switched to dataset {self.iterator_idx} with a micro-batch size {batch_size}. It has a length of {len(train_dataset)} and sequence length of {len(train_dataset[0]['input_ids'])}",
             rank0_only=True,
         )
-        return DataLoader(train_dataset, collate_fn=self.data_collator, batch_size=batch_size, **common_args)
+        dataloader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            **common_args,
+        )
+        return dataloader
 
     def val_dataloader(self):
         common_args = dict(

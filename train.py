@@ -4,7 +4,7 @@ from pathlib import Path
 
 import torch
 import wandb
-from lightning import Trainer, seed_everything
+from lightning import seed_everything
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint, EarlyStopping
 from lightning.pytorch.loggers.wandb import WandbLogger
 from lightning.pytorch.plugins.environments import LightningEnvironment, SLURMEnvironment
@@ -22,7 +22,7 @@ from src.helpers import (
     check_for_wandb_checkpoint_and_download_if_necessary,
 )
 from src.model import PretrainBERT, QABERT, SCBERT
-from src.switch_dataset_callback import SwitchDatasetCallback
+from src.custom_train_loop.trainer import CustomTrainer
 
 WANDB_PROJECT = "bert-pretraining"
 WANDB_ENTITY = "raphael-team"
@@ -159,15 +159,11 @@ def main(args: TrainingArgs):
     early_stopping_callback = EarlyStopping(
         monitor="val/loss", min_delta=args.early_stopping_delta, patience=args.early_stopping_patience
     )
-    switch_dataset_callback = SwitchDatasetCallback(
-        monitor="val/loss", min_delta=args.dataset_switching_delta, patience=args.dataset_switching_patience
-    )
     callbacks = [
         checkpoint_callback,
         wandb_disk_cleanup_callback,
         lr_monitor,
         ProgressMetricCallback(),
-        switch_dataset_callback,
         early_stopping_callback,
     ]
     if args.accelerator == "cuda":
@@ -182,7 +178,7 @@ def main(args: TrainingArgs):
     val_frequency_in_iters = args.eval_interval * args.gradient_accumulation_steps
 
     # Initialize trainer
-    trainer = Trainer(
+    trainer = CustomTrainer(
         max_steps=args.training_goal,
         val_check_interval=val_frequency_in_iters,
         check_val_every_n_epoch=None,  # validation based on steps instead of epochs
@@ -201,6 +197,10 @@ def main(args: TrainingArgs):
         inference_mode=not args.compile,  # inference_mode for val/test and PyTorch 2.0 compiler don't like each other
         limit_train_batches=None if args.steps_per_seq_length == -1 else args.steps_per_seq_length,
         reload_dataloaders_every_n_epochs=args.reload_dataloaders_every_n_epochs,
+        monitor="val/loss",
+        min_delta=args.dataset_switching_delta, 
+        patience=args.dataset_switching_patience,
+        num_datasets=args.use_n_training_datasets, 
     )
 
     if current_process_rank == 0:
