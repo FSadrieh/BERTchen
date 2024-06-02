@@ -337,6 +337,7 @@ def make_group_text_function(max_seq_length, tokenizer):
 
     return group_texts
 
+
 def make_different_seq_len_packing(max_seq_length):
     def change_seq_len_packing(examples):
         # Concatenate all texts.
@@ -352,6 +353,7 @@ def make_different_seq_len_packing(max_seq_length):
             for k, t in concatenated_examples.items()
         }
         return result
+
     return change_seq_len_packing
 
 
@@ -379,7 +381,9 @@ def write_to_disk(train_paragraphs, dev_paragraphs, out_dir, dev_size, part_name
     logger.print(output_dir)
 
 
-def process_pre_training_dataset(dataset, tokenizer, max_seq_length, task_type, processes, dev_size, max_train_size, out_dir, create_n_training_datasets):
+def process_pre_training_dataset(
+    dataset, tokenizer, max_seq_length, task_type, processes, dev_size, max_train_size, out_dir, create_n_training_datasets
+):
     processed_dataset = tokenize_dataset(dataset, tokenizer, max_seq_length, task_type, processes)
     processed_dataset = group_text(processed_dataset, max_seq_length, tokenizer)
     processed_dataset, total_len = shuffle_dataset_and_log_length(processed_dataset)
@@ -388,7 +392,7 @@ def process_pre_training_dataset(dataset, tokenizer, max_seq_length, task_type, 
         # We want to split the train_paragraphs into n datasets
         end = len(train_paragraphs)
         for i in range(create_n_training_datasets - 1):
-            new_max_length = max_seq_length // 2**(create_n_training_datasets - i - 1)
+            new_max_length = max_seq_length // 2 ** (create_n_training_datasets - i - 1)
             beginning = end - len(train_paragraphs) // create_n_training_datasets
             split = train_paragraphs.select(range(beginning, end))
             write_to_disk(change_packed_seq_len(split, new_max_length), None, out_dir, dev_size=0, part_name=i)
@@ -447,6 +451,7 @@ def cap_training_examples(train_paragraphs, max_train_size):
         train_paragraphs = train_paragraphs.select(range(max_train_size))
     return train_paragraphs
 
+
 def group_text(processed_dataset, max_seq_length, tokenizer):
     return processed_dataset.map(
         make_group_text_function(max_seq_length, tokenizer),
@@ -463,6 +468,7 @@ def change_packed_seq_len(processed_dataset, max_seq_length):
         batched=True,
         remove_columns=processed_dataset.column_names,
     )
+
 
 @graceful_exceptions()
 def main(args: Args):
@@ -520,7 +526,9 @@ def main(args: Args):
         "out_dir": args.out_dir,
     }
     if DATASET_TO_TASK[args.dataset] == "pre-training":
-        process_pre_training_dataset(train_val_datasets[0], **process_args, create_n_training_datasets=args.create_n_training_datasets)
+        process_pre_training_dataset(
+            train_val_datasets[0], **process_args, create_n_training_datasets=args.create_n_training_datasets
+        )
     else:
         process_fine_tuning_dataset(train_val_datasets, **process_args)
 

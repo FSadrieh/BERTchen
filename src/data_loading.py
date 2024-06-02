@@ -35,6 +35,8 @@ class LMDataModule(L.LightningDataModule):
         self.local_rank = get_rank()
 
         self.tokenizer = tokenizer
+        self.iterator_idx = 0
+        self.use_n_training_datasets = self.args.use_n_training_datasets
 
     def prepare_data(self) -> None:
         if not (os.path.exists(self.train_file) and os.path.exists(self.val_file)):
@@ -51,9 +53,9 @@ class LMDataModule(L.LightningDataModule):
         self.train_dataset = train_val_datasets["train"]
         self.val_dataset = train_val_datasets["val"]
 
-        if self.args.use_n_training_datasets > 1:
+        if self.use_n_training_datasets > 1:
             self.train_datasets = []
-            for i in range(self.args.use_n_training_datasets - 1):
+            for i in range(self.use_n_training_datasets - 1):
                 train_file = str(self.data_dir / f"train_{i}.jsonl")
                 train_dataset = datasets.load_dataset(
                     "json",
@@ -94,14 +96,28 @@ class LMDataModule(L.LightningDataModule):
             pin_memory=True,
             shuffle=True,
         )
-        current_epoch = self.trainer.current_epoch
-        if current_epoch < self.args.use_n_training_datasets -1:
-            train_dataset = self.train_datasets[current_epoch]
-            batch_size = self.args.micro_batch_size[current_epoch]
-            logger.info(f"Switched to dataset {current_epoch} with a micro-batch size {batch_size}. It has a length of {len(train_dataset)} and sequence length of {len(train_dataset[0]['input_ids'])}", rank0_only=True)
-            return DataLoader(train_dataset, collate_fn=self.data_collator, batch_size=batch_size, **common_args)
-        train_dataset = self.train_dataset.shuffle(seed=self.trainer.current_epoch)
-        return DataLoader(train_dataset, collate_fn=self.data_collator, batch_size=self.args.micro_batch_size[-1], **common_args)
+        dataloader = DataLoader(
+            self.train_dataset,
+            collate_fn=self.data_collator,
+            batch_size=self.args.micro_batch_size[-1],
+            **common_args,
+        )
+        if self.use_n_training_datasets == 1 or self.iterator_idx >= self.use_n_training_datasets:
+            logger.info(
+                f"Switched to final dataset with a micro-batch size {self.args.micro_batch_size[-1]}. It has a length of {len(train_dataset)} and sequence length of {len(train_dataset[0]['input_ids'])}",
+                rank0_only=True,
+            )
+            self.iterator_idx += 1
+            return dataloader
+
+        train_dataset = self.train_datasets[self.iterator_idx]
+        batch_size = self.args.micro_batch_size[self.iterator_idx]
+        self.iterator_idx += 1
+        logger.info(
+            f"Switched to dataset {self.iterator_idx} with a micro-batch size {batch_size}. It has a length of {len(train_dataset)} and sequence length of {len(train_dataset[0]['input_ids'])}",
+            rank0_only=True,
+        )
+        return DataLoader(train_dataset, collate_fn=self.data_collator, batch_size=batch_size, **common_args)
 
     def val_dataloader(self):
         common_args = dict(
@@ -112,4 +128,4 @@ class LMDataModule(L.LightningDataModule):
             ),  # https://discuss.pytorch.org/t/what-are-the-dis-advantages-of-persistent-workers/102110/10
             pin_memory=True,
         )
-        return DataLoader(self.val_dataset, collate_fn=self.data_collator, **common_args)
+        return DataLoader(self.val_dataset, collate_fn=self.data_collator, **common_args, shuffle=False)

@@ -63,7 +63,9 @@ class PretrainBERT(L.LightningModule):
         loss = self(**batch)
         self.end.record()
         torch.cuda.synchronize()
-        self.log("tokens/sec", batch["input_ids"].numel() / (self.start.elapsed_time(self.end)/1000), on_step=True, on_epoch=False)
+        self.log(
+            "tokens/sec", batch["input_ids"].numel() / (self.start.elapsed_time(self.end) / 1000), on_step=True, on_epoch=False
+        )
         self.log("train/loss", loss, on_step=True, on_epoch=False)
         return loss
 

@@ -22,6 +22,7 @@ from src.helpers import (
     check_for_wandb_checkpoint_and_download_if_necessary,
 )
 from src.model import PretrainBERT, QABERT, SCBERT
+from src.switch_dataset_callback import SwitchDatasetCallback
 
 WANDB_PROJECT = "bert-pretraining"
 WANDB_ENTITY = "raphael-team"
@@ -105,7 +106,12 @@ def main(args: TrainingArgs):
             torch_load = torch.load(args.saved_checkpoint_path, map_location=torch.device("cpu"))
             model.load_state_dict(torch_load["state_dict"], strict=False)
     else:
-        model = PretrainBERT(**model_args, model_name_or_path=args.hf_model_name, from_scratch=args.from_scratch, tokenizer_vocab_size=tokenizer.vocab_size)
+        model = PretrainBERT(
+            **model_args,
+            model_name_or_path=args.hf_model_name,
+            from_scratch=args.from_scratch,
+            tokenizer_vocab_size=tokenizer.vocab_size,
+        )
 
     if args.task == "question-answering":
         model = QABERT(
@@ -150,8 +156,20 @@ def main(args: TrainingArgs):
         auto_insert_metric_name=False,
         every_n_train_steps=int(args.save_interval),
     )
-    early_stopping_callback = EarlyStopping(monitor="val/loss", min_delta=0.00, patience=args.patience)
-    callbacks = [checkpoint_callback, wandb_disk_cleanup_callback, lr_monitor, ProgressMetricCallback(), early_stopping_callback]
+    early_stopping_callback = EarlyStopping(
+        monitor="val/loss", min_delta=args.early_stopping_delta, patience=args.early_stopping_patience
+    )
+    switch_dataset_callback = SwitchDatasetCallback(
+        monitor="val/loss", min_delta=args.dataset_switching_delta, patience=args.dataset_switching_patience
+    )
+    callbacks = [
+        checkpoint_callback,
+        wandb_disk_cleanup_callback,
+        lr_monitor,
+        ProgressMetricCallback(),
+        switch_dataset_callback,
+        early_stopping_callback,
+    ]
     if args.accelerator == "cuda":
         callbacks.append(CUDAMetricsCallback())
 
@@ -182,7 +200,7 @@ def main(args: TrainingArgs):
         limit_val_batches=None if args.eval_samples == -1 else (args.eval_samples // args.eval_micro_batch_size),
         inference_mode=not args.compile,  # inference_mode for val/test and PyTorch 2.0 compiler don't like each other
         limit_train_batches=None if args.steps_per_seq_length == -1 else args.steps_per_seq_length,
-        reload_dataloaders_every_n_epochs= args.reload_dataloaders_every_n_epochs
+        reload_dataloaders_every_n_epochs=args.reload_dataloaders_every_n_epochs,
     )
 
     if current_process_rank == 0:

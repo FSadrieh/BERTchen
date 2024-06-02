@@ -138,8 +138,10 @@ class TrainingArgs:
     fast_dev_run: bool = field(default=False)
     "Do fast run through training and validation with reduced sizes."
 
-    patience: int = field(default=5)
+    early_stopping_patience: int = field(default=5)
     "Early stopping patience."
+
+    early_stopping_delta: float = field(default="0.01")
 
     ###############################################
     ###### Efficient Bert Pretraining Params ######
@@ -154,12 +156,17 @@ class TrainingArgs:
     mlm_probability: float = field(default=0.15)
 
     steps_per_seq_length: float = field(default=-1)
-    "If -1, do not limit the number of steps per sequence length."
+    "If -1, do not limit the number of steps per sequence length. This is the hard limit for the number of steps per sequence length."
 
     reload_dataloaders_every_n_epochs: int = field(default=0)
     "If > 0, reload the dataloaders every n epochs."
 
     use_n_training_datasets: int = field(default=1, alias="--untd")
+
+    dataset_switching_patience: int = field(default=5)
+    "Dataset switching patience. After how many epochs without improvement (dataset_switching_delta) to switch the dataset."
+
+    dataset_switching_delta: float = field(default=0.1)
 
     def __post_init__(self):
         assert self.num_devices > 0

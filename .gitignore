@@ -140,3 +140,9 @@ dmypy.json
 
 # everything that has to do with run-results
 /template
+
+/slurm*
+/cfgs*
+/.vscode*
+/tokenizers*
+/old*
