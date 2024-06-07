@@ -3,8 +3,6 @@ import torch.nn as nn
 from evaluate import load
 from transformers.models.auto.configuration_auto import AutoConfig
 from transformers.models.auto.modeling_auto import AutoModel
-from transformers.models.bert.modeling_bert import BertOnlyMLMHead
-from transformers.modeling_outputs import BaseModelOutputWithPoolingAndCrossAttentions
 from transformers.modeling_utils import PreTrainedModel
 import collections
 import torch
@@ -27,6 +25,7 @@ class PretrainBERT(L.LightningModule):
         tokenizer_vocab_size: int,
         epsilon: float = 1e-8,
         save_hyperparameters: bool = True,
+        use_n_val_datasets: int = 1,
     ) -> None:
         super().__init__()
         if save_hyperparameters:
@@ -37,19 +36,22 @@ class PretrainBERT(L.LightningModule):
             config.vocab_size = tokenizer_vocab_size
 
         if model_name_or_path.startswith("mosaic"):
-            from src.mosaic_bert import BertModel
+            from src.mosaic_bert import BertModel, BertOnlyMLMHead
 
             self.model: PreTrainedModel = (
                 BertModel.from_pretrained(model_name_or_path, config=config) if not from_scratch else BertModel(config=config)
             )
+            self.head = BertOnlyMLMHead(config, self.model.embeddings.word_embeddings.weight)
         else:
+            from transformers.models.bert.modeling_bert import BertOnlyMLMHead
+
             self.model: PreTrainedModel = (
                 AutoModel.from_pretrained(model_name_or_path, config=config)
                 if not from_scratch
                 else AutoModel.from_config(config=config)
             )
+            self.head = BertOnlyMLMHead(config)
 
-        self.head = BertOnlyMLMHead(config)
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.beta1 = beta1
@@ -62,11 +64,16 @@ class PretrainBERT(L.LightningModule):
         self.start = torch.cuda.Event(enable_timing=True)
         self.end = torch.cuda.Event(enable_timing=True)
 
+        self.val_dataloader_to_seq_len = {
+            0: "val/loss_64" if use_n_val_datasets > 1 else "val/loss",
+            1: "val/loss_128",
+            2: "val/loss_256",
+            3: "val/loss_512",
+        }
+
     def forward(self, input_ids, attention_mask, labels, token_type_ids=None):
-        sequence_output = self.model(
-            input_ids, attention_mask, token_type_ids=token_type_ids, output_hidden_states=True
-        ).last_hidden_state
-        prediction_scores = self.head(sequence_output)
+        last_hidden_states = self.model(input_ids, attention_mask, output_hidden_states=True)[0]
+        prediction_scores = self.head(last_hidden_states)
         loss = self.loss_function(prediction_scores.view(-1, self.model.config.vocab_size), labels.view(-1))
         return loss
 
@@ -81,9 +88,9 @@ class PretrainBERT(L.LightningModule):
         self.log("train/loss", loss, on_step=True, on_epoch=False)
         return loss
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
         loss = self(**batch)
-        self.log("val/loss", loss, on_step=False, on_epoch=True, sync_dist=True)
+        self.log(self.val_dataloader_to_seq_len[dataloader_idx], loss, on_step=False, on_epoch=True, sync_dist=True)
 
     def configure_optimizers(self):
         return configure_optimizer(
@@ -112,6 +119,7 @@ class QABERT(L.LightningModule):
         warmup_period: int,
         eval_interval: int,
         num_labels: int,
+        finetune_last_layer: bool,
         epsilon: float = 1e-8,
         save_hyperparameters: bool = True,
     ) -> None:
@@ -130,10 +138,10 @@ class QABERT(L.LightningModule):
         self.warmup_period = warmup_period
         self.eval_interval = eval_interval
         self.epsilon = epsilon
+        self.finetune_last_layer = finetune_last_layer
 
     def forward(self, input_ids, attention_mask, start_positions, end_positions, token_type_ids=None):
-        # TODO: Add option to fine-tune the last hidden_layer
-        output = self.model(input_ids, attention_mask, token_type_ids=token_type_ids)
+        output = self.model(input_ids, attention_mask)[0]
         return self.head(output, start_positions=start_positions, end_positions=end_positions)
 
     def training_step(self, batch, batch_idx):
@@ -199,8 +207,11 @@ class QABERT(L.LightningModule):
         return predicted_answers
 
     def configure_optimizers(self):
+        trainable_parameters = list(self.head.qa.named_parameters())
+        if self.finetune_last_layer:
+            trainable_parameters += list(self.model.encoder.layer[-1].named_parameters())
         return configure_optimizer(
-            list(self.head.qa.named_parameters()),
+            trainable_parameters,
             self.global_rank,
             self.learning_rate,
             self.weight_decay,
@@ -219,8 +230,8 @@ class QuestionAnsweringHead(nn.Module):
         super().__init__()
         self.qa = nn.Linear(hidden_size, num_labels)
 
-    def forward(self, sequence_output: BaseModelOutputWithPoolingAndCrossAttentions, start_positions, end_positions):
-        logits = self.qa(sequence_output.last_hidden_state)
+    def forward(self, last_hidden_state: torch.Tensor, start_positions, end_positions):
+        logits = self.qa(last_hidden_state)
         start_logits, end_logits = logits.split(1, dim=-1)
         start_logits = start_logits.squeeze(-1).contiguous()
         end_logits = end_logits.squeeze(-1).contiguous()
@@ -248,6 +259,7 @@ class SCBERT(L.LightningModule):
         eval_interval: int,
         num_labels: int,
         classifier_dropout: float,
+        finetune_last_layer: bool,
         epsilon: float = 1e-8,
         save_hyperparameters: bool = True,
     ) -> None:
@@ -265,13 +277,13 @@ class SCBERT(L.LightningModule):
         self.warmup_period = warmup_period
         self.eval_interval = eval_interval
         self.epsilon = epsilon
+        self.finetune_last_layer = finetune_last_layer
 
         self.metric = load("accuracy")
 
     def forward(self, input_ids, attention_mask, labels, token_type_ids=None):
-        # TODO: remodel to be more like qa bert and not use the cls token. Tokenization anpassen.
-        output = self.model(input_ids, attention_mask, token_type_ids=token_type_ids)
-        return self.head(output, labels)
+        last_hidden_state = self.model(input_ids, attention_mask)[0]
+        return self.head(last_hidden_state, labels, attention_mask)
 
     def training_step(self, batch, batch_idx):
         loss, logits = self(**batch)
@@ -286,8 +298,11 @@ class SCBERT(L.LightningModule):
         self.log("val/accuracy", accuracy, on_step=False, on_epoch=True, sync_dist=True)
 
     def configure_optimizers(self):
+        trainable_parameters = list(self.head.cls.named_parameters())
+        if self.finetune_last_layer:
+            trainable_parameters += list(self.model.encoder.layer[-1].named_parameters())
         return configure_optimizer(
-            list(self.head.cls.named_parameters()),
+            trainable_parameters,
             self.global_rank,
             self.learning_rate,
             self.weight_decay,
@@ -309,8 +324,12 @@ class SequenceClsHead(nn.Module):
 
         self.num_labels = num_labels
 
-    def forward(self, sequence_output: BaseModelOutputWithPoolingAndCrossAttentions, labels):
-        sequence_output = self.dropout(sequence_output.pooler_output)
-        logits = self.cls(sequence_output)
+    def forward(self, last_hidden_state: torch.Tensor, labels, attention_mask):
+        expanded_attention_mask = attention_mask.unsqueeze(-1).expand(last_hidden_state.size())
+        avg_last_hidden_state = torch.sum(last_hidden_state * expanded_attention_mask, dim=1) / torch.sum(
+            attention_mask, dim=1, keepdim=True
+        )
+        avg_last_hidden_state = self.dropout(avg_last_hidden_state)
+        logits = self.cls(avg_last_hidden_state)
         loss = self.loss_function(logits.view(-1, self.num_labels), labels.view(-1))
         return loss, logits

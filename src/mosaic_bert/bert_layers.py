@@ -44,6 +44,7 @@ import sys
 import warnings
 from functools import lru_cache
 from typing import List, Optional, Tuple, Union
+from print_on_steroids import logger
 
 # Add folder root to path to allow us to use relative imports regardless of what directory the script is run from
 sys.path.append(os.path.dirname(os.path.realpath(__file__)))
@@ -65,8 +66,9 @@ try:
     from flash_attn import flash_attn_qkvpacked_func  # type: ignore
 
     installed_version = importlib.metadata.version("flash_attn")  # type: ignore
-    if installed_version < "2.4.2":
-        raise ImportError("newer version of flash_attn required (>= 2.4.2)")
+    if installed_version < "2.4.2" or torch.cuda.get_device_capability(0) == (7, 5):
+        raise ImportError("newer version of flash_attn required (>= 2.4.2) or Turing GPU required")
+    logger.info("Using Flash Attention 2 for Mosaic BERT")
     IMPL_USE_FLASH2 = True
 except ImportError as e:
     warnings.warn(f"Failed to import flash_attn. Will try to import triton implementation: {e}", stacklevel=2)

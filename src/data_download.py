@@ -25,7 +25,7 @@ from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 from utils import wait_for_debugger
 
-DEFAULT_DATA_LOCATION = "/hpi/fs00/share/fg-demelo/small-language-models/data"
+DEFAULT_DATA_LOCATION = "/hpi/fs00/share/fg-demelo/efficient-bert-pretraining/data"
 
 DATASET_TO_TASK = {
     "c4": "pre-training",
@@ -51,7 +51,7 @@ class Args:
     "If 0, do not construct dev set."
 
     test_size: int = field(default=0)
-    "If 0, do not contruct test set."
+    "If 0, do not construct test set."
 
     processes: int = field(default=4)
     "Number of processes for parallel tokenization."
@@ -78,11 +78,17 @@ class Args:
     data_location: str = field(default="default")
     "We first check if we have downloaded the data already in this location, before we download it again."
 
-    tokenizer: str = field(default="google-bert/bert-base-cased")
+    tokenizer: str = field(default="google-bert/bert-base-uncased")
     "HuggingFace tokenizer identifier."
 
-    create_n_training_datasets: int = field(default=1, alias="--cntd")
-    "Create n training datasets from the same source dataset. Each training dataset will have the double the sequence length of the prior one. Only used if task is pre-training."
+    train_sequence_lengths: str = field(default=None, alias="--tsl")
+    "Specify the sequence lengths of the training datasets seperated by comma. If None only create one training set with maximum seq len. Only used if task is pre-training."
+
+    val_sequence_lengths: str = field(default=None, alias="--vsl")
+    "Specify the sequence lengths of the validation datasets seperated by comma. If None only create one validation set with maximum seq len Only used if task is pre-training."
+
+    dataset_size_splits: str = field(default=None)
+    "If set it will determine, the sizes of the different train datasets. Format: 0.5,0.25,0.25 (For len(train_sequence_lengths) = 3)"
 
 
 def load_and_process_germaneval(
@@ -214,7 +220,7 @@ def group_lines(processes: int, dataset: datasets.Dataset):
         return {"docs": documents}
 
     map_args = dict(batched=True, batch_size=len(dataset), remove_columns=["text", "id"], num_proc=processes)
-    dataset = dataset.map(_document_grouping_f, **map_args)
+    dataset = dataset.map(_document_grouping_f, **map_args, desc="Grouping lines for cc100")
     dataset = dataset.rename_column("docs", "text")
     return dataset
 
@@ -226,6 +232,7 @@ def make_tokenize_function(tokenizer, task_type, max_seq_length=None, truncate=T
             padding=False,
             truncation=truncate,
             max_length=max_seq_length,
+            add_special_tokens=False,
         )
         return {**tokenized, "labels": examples["label"]}
 
@@ -357,22 +364,25 @@ def make_different_seq_len_packing(max_seq_length):
     return change_seq_len_packing
 
 
-def write_to_disk(train_paragraphs, dev_paragraphs, out_dir, dev_size, part_name=None):
-    logger.info(f"Example train split data: {train_paragraphs.column_names}")
-    logger.info(f"len: {len(train_paragraphs)}")
+def write_to_disk(train_paragraphs, dev_paragraphs, out_dir, part_name=None):
+    assert train_paragraphs or dev_paragraphs, "At least one of train or dev paragraphs must be provided."
+    logger.info(f"Example train split data: {train_paragraphs.column_names if train_paragraphs else dev_paragraphs}")
+    logger.info(f"len: {len(train_paragraphs) if train_paragraphs else len(dev_paragraphs)}")
     logger.info("Writing data...")
     output_dir = Path(out_dir)
     os.makedirs(str(output_dir), exist_ok=True)
     PERFORMANT_BUFFER_SIZE_BYTES = 1024 * 1024 * 100  # 100 MB
     train_file_name = "train.jsonl" if part_name is None else f"train_{part_name}.jsonl"
 
-    train_fp = io.open(str(output_dir / train_file_name), "wt", buffering=PERFORMANT_BUFFER_SIZE_BYTES)
-    with jsonlines.Writer(train_fp, compact=True) as writer:
-        writer.write_all(train_paragraphs)
-    train_fp.close()
+    if train_paragraphs is not None:
+        train_fp = io.open(str(output_dir / train_file_name), "wt", buffering=PERFORMANT_BUFFER_SIZE_BYTES)
+        with jsonlines.Writer(train_fp, compact=True) as writer:
+            writer.write_all(train_paragraphs)
+        train_fp.close()
 
-    if dev_size and dev_paragraphs:
-        dev_fp = io.open(str(output_dir / "dev.jsonl"), "wt", buffering=PERFORMANT_BUFFER_SIZE_BYTES)
+    if dev_paragraphs is not None:
+        dev_file_name = "dev.jsonl" if part_name is None else f"dev_{part_name}.jsonl"
+        dev_fp = io.open(str(output_dir / dev_file_name), "wt", buffering=PERFORMANT_BUFFER_SIZE_BYTES)
         with jsonlines.Writer(dev_fp, compact=True) as writer:
             writer.write_all(dev_paragraphs)
         dev_fp.close()
@@ -382,25 +392,60 @@ def write_to_disk(train_paragraphs, dev_paragraphs, out_dir, dev_size, part_name
 
 
 def process_pre_training_dataset(
-    dataset, tokenizer, max_seq_length, task_type, processes, dev_size, max_train_size, out_dir, create_n_training_datasets
+    dataset,
+    tokenizer,
+    max_seq_length,
+    task_type,
+    processes,
+    dev_size,
+    max_train_size,
+    out_dir,
+    training_seq_lens,
+    validation_seq_lens,
+    dataset_size_splits,
 ):
     processed_dataset = tokenize_dataset(dataset, tokenizer, max_seq_length, task_type, processes)
     processed_dataset = group_text(processed_dataset, max_seq_length, tokenizer)
     processed_dataset, total_len = shuffle_dataset_and_log_length(processed_dataset)
     train_paragraphs, dev_paragraphs = generate_val_split(processed_dataset, total_len, dev_size)
-    if create_n_training_datasets > 1:
+    if len(training_seq_lens) > 1:
         # We want to split the train_paragraphs into n datasets
-        end = len(train_paragraphs)
-        for i in range(create_n_training_datasets - 1):
-            new_max_length = max_seq_length // 2 ** (create_n_training_datasets - i - 1)
-            beginning = end - len(train_paragraphs) // create_n_training_datasets
-            split = train_paragraphs.select(range(beginning, end))
-            write_to_disk(change_packed_seq_len(split, new_max_length), None, out_dir, dev_size=0, part_name=i)
-            end = beginning
-        train_paragraphs = train_paragraphs.select(range(end))
+        dataset_splits = split_dataset(train_paragraphs, dataset_size_splits, training_seq_lens)
+        for i, split in enumerate(dataset_splits):
+            if i == len(training_seq_lens) - 1:
+                split = cap_training_examples(train_paragraphs, max_train_size)
+            write_to_disk(split, None, out_dir, part_name=i)
 
-    train_paragraphs = cap_training_examples(train_paragraphs, max_train_size)
-    write_to_disk(train_paragraphs, dev_paragraphs, out_dir, dev_size)
+    else:
+        train_paragraphs = cap_training_examples(train_paragraphs, max_train_size)
+        write_to_disk(train_paragraphs, None, out_dir)
+
+    if len(validation_seq_lens) > 1:
+        # We want to put the same dev_paragraphs into n datasets with differing sequence length
+        for i in range(len(validation_seq_lens) - 1):
+            dataset = change_packed_seq_len(dev_paragraphs, validation_seq_lens[i])
+            write_to_disk(None, dataset, out_dir, part_name=i)
+        write_to_disk(None, dev_paragraphs, out_dir, part_name=len(validation_seq_lens) - 1)
+
+    else:
+        write_to_disk(None, dev_paragraphs, out_dir)
+
+
+def split_dataset(train_paragraphs, dataset_size_splits, training_seq_lens, strategy="naive"):
+    """
+    This function selects the splits for the different training datasets.
+    In the future it should support different strategies.
+    """
+    splits = []
+    if strategy == "naive":
+        end = len(train_paragraphs)
+        for i in range(len(training_seq_lens) - 1):
+            beginning = int(end - len(train_paragraphs) * dataset_size_splits[i])
+            splits.append(change_packed_seq_len(train_paragraphs.select(range(beginning, end)), training_seq_lens[i]))
+            end = beginning
+        splits.append(change_packed_seq_len(train_paragraphs.select(range(end)), training_seq_lens[-1]))
+
+    return splits
 
 
 def process_fine_tuning_dataset(
@@ -419,7 +464,7 @@ def process_fine_tuning_dataset(
         train_paragraphs = processed_datasets[0]
         dev_paragraphs = processed_datasets[1].select(range(dev_size))
     train_paragraphs = cap_training_examples(train_paragraphs, max_train_size)
-    write_to_disk(train_paragraphs, dev_paragraphs, out_dir, dev_size)
+    write_to_disk(train_paragraphs, dev_paragraphs, out_dir)
 
 
 def tokenize_dataset(dataset, tokenizer, max_seq_length, task_type, processes):
@@ -429,6 +474,7 @@ def tokenize_dataset(dataset, tokenizer, max_seq_length, task_type, processes):
         batched=True,
         num_proc=processes,
         remove_columns=dataset.column_names,
+        desc="Tokenizing",
     )
 
 
@@ -458,6 +504,7 @@ def group_text(processed_dataset, max_seq_length, tokenizer):
         batch_size=1_000,
         batched=True,
         remove_columns=processed_dataset.column_names,
+        desc="Grouping texts",
     )
 
 
@@ -467,6 +514,7 @@ def change_packed_seq_len(processed_dataset, max_seq_length):
         batch_size=1_000,
         batched=True,
         remove_columns=processed_dataset.column_names,
+        desc=f"Changing packed sequence length to {max_seq_length}",
     )
 
 
@@ -480,6 +528,22 @@ def main(args: Args):
         # Disable caching because we write the end result to disk anyways. Intermediary caches just clutter the disk!
         logger.info("Disabling caching to conserve disk space.")
         datasets.fingerprint.disable_caching()
+
+    training_seq_lens = (
+        list(map(int, str(args.train_sequence_lengths).split(","))) if args.train_sequence_lengths else [args.max_seq_length]
+    )
+    dataset_size_splits = (
+        list(map(float, str(args.dataset_size_splits).split(",")))
+        if args.dataset_size_splits
+        else [1 / len(training_seq_lens)] * len(training_seq_lens)
+    )
+    validation_seq_lens = (
+        list(map(int, str(args.val_sequence_lengths).split(","))) if args.val_sequence_lengths else [args.max_seq_length]
+    )
+    assert sum(dataset_size_splits) == 1, "The sum of the dataset size splits must be 1."
+    assert len(dataset_size_splits) == len(
+        training_seq_lens
+    ), "The number of dataset size splits must be equal to the number of training datasets."
 
     os.makedirs(args.out_dir, exist_ok=True)
     logger.info("Downloading dataset. This can take some time, so sit back and relax...")
@@ -507,7 +571,7 @@ def main(args: Args):
 
     #### Only download ####
     if args.only_download:
-        write_to_disk(train_val_datasets[0], train_val_datasets[1], args.out_dir, args.dev_size)
+        write_to_disk(train_val_datasets[0], train_val_datasets[1], args.out_dir)
         return
 
     ##### For CC100: Group individual lines into documents #####
@@ -527,7 +591,11 @@ def main(args: Args):
     }
     if DATASET_TO_TASK[args.dataset] == "pre-training":
         process_pre_training_dataset(
-            train_val_datasets[0], **process_args, create_n_training_datasets=args.create_n_training_datasets
+            train_val_datasets[0],
+            **process_args,
+            training_seq_lens=training_seq_lens,
+            validation_seq_lens=validation_seq_lens,
+            dataset_size_splits=dataset_size_splits,
         )
     else:
         process_fine_tuning_dataset(train_val_datasets, **process_args)
@@ -544,7 +612,7 @@ def main(args: Args):
 
 
 if __name__ == "__main__":
-    args = parse(Args)
+    args = parse(Args, add_config_path_arg=True)
     if args.debug:
         wait_for_debugger()
     main(args)

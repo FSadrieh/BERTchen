@@ -3,6 +3,7 @@ from lightning.pytorch.utilities.exceptions import SIGTERMException
 from lightning.pytorch.loops.fetchers import _DataFetcher
 import numpy as np
 import torch
+from print_on_steroids import logger
 
 
 class CustomTrainingEpochLoop(_TrainingEpochLoop):
@@ -14,10 +15,10 @@ class CustomTrainingEpochLoop(_TrainingEpochLoop):
         min_steps: int,
         max_steps: int,
         monitor: str,
-        min_delta: float = 0.0,
-        patience: int = 3,
-        mode: str = "min",
-        num_datasets: int = 1,
+        min_delta: float,
+        patience: int,
+        mode: str,
+        num_datasets: int,
     ):
         super().__init__(trainer, min_steps=min_steps, max_steps=max_steps)
         self.monitor = monitor
@@ -26,6 +27,7 @@ class CustomTrainingEpochLoop(_TrainingEpochLoop):
         self.mode = mode
         self.wait = 0
         self.monitor_op = self.mode_dict[mode]
+        self.min_delta *= 1 if self.monitor_op == torch.gt else -1
         torch_inf = torch.tensor(np.Inf)
         self.best_score = torch_inf if self.monitor_op == torch.lt else -torch_inf
         self.num_datasets = num_datasets
@@ -48,11 +50,16 @@ class CustomTrainingEpochLoop(_TrainingEpochLoop):
     def switch_dataset(self, current: float) -> bool:
         if self.num_datasets > 1:
             if self.monitor_op(current - self.min_delta, self.best_score.to(current.device)):
+                logger.info(
+                    f"No need to switch dataset, the current {self.monitor}: {current} is better than the previous best {self.monitor}: {self.best_score} by more than {self.min_delta}. Waited for {self.wait} epochs already.",
+                    rank0_only=True,
+                )
                 self.best_score = current
                 self.wait = 0
             else:
                 self.wait += 1
                 if self.wait >= self.patience:
+                    self.wait = 0
                     return True
 
         return False

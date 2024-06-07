@@ -15,7 +15,7 @@ class TrainingArgs:
 
     data_dir: Path = field(alias="-d")
 
-    hf_model_name: str = field(default="google-bert/bert-base-cased", alias="--model")
+    hf_model_name: str = field(default="google-bert/bert-base-uncased", alias="--model")
     "HuggingFace model identifier. This is used to construct the model architecture and load pretrained weights if not specified otherwise."
 
     from_scratch: bool = field(default=True)
@@ -26,10 +26,10 @@ class TrainingArgs:
 
     resume: bool = False
 
-    train_file: str = field(default="train.jsonl")
+    train_files: str = field(default="train.jsonl")
     "Name of the training file."
 
-    val_file: str = field(default="dev.jsonl")
+    val_files: str = field(default="dev.jsonl")
     "Name of the validation file."
 
     tokenizer_path: str | None = field(default=None)
@@ -92,8 +92,8 @@ class TrainingArgs:
     You should tune this so that you do not get GPU RAM OOM errors. We automatically calculate the gradient accumulation steps to achieve your desired `batch_size`.
     For each dataset you can have one batch size. Specify them for the datasets in the order they are loaded."""
 
-    eval_micro_batch_size: int = field(default=None)
-    "If None, use micro_batch_size."
+    eval_micro_batch_size_multiplier: int = field(default=1)
+    "If 1 use micro_batch_size[-1] for evaluation. Else use eval_micro_batch_size_multiplier * micro_batch_size."
 
     gradient_accumulation_steps: int = field(default=-1)
     "If -1, set automatically based on batch_size and micro_batch_size."
@@ -155,13 +155,13 @@ class TrainingArgs:
 
     mlm_probability: float = field(default=0.15)
 
+    finetune_last_layer: bool = field(default=False)
+
     steps_per_seq_length: float = field(default=-1)
     "If -1, do not limit the number of steps per sequence length. This is the hard limit for the number of steps per sequence length."
 
     reload_dataloaders_every_n_epochs: int = field(default=0)
-    "If > 0, reload the dataloaders every n epochs."
-
-    use_n_training_datasets: int = field(default=1, alias="--untd")
+    "If > 0, reload the dataloaders every n epochs. Needed on 1 for dataset switching."
 
     dataset_switching_patience: int = field(default=5)
     "Dataset switching patience. After how many epochs without improvement (dataset_switching_delta) to switch the dataset."
@@ -198,9 +198,6 @@ class TrainingArgs:
             self.tokenizer_path = self.hf_model_name
             assert self.hf_model_name is not None
 
-        if self.eval_micro_batch_size is None:
-            self.eval_micro_batch_size = self.micro_batch_size[-1]
-
         # Calculate training constants
         if self.base_unit == "samples":
             UNITS_PER_STEP = self.batch_size
@@ -223,3 +220,8 @@ class TrainingArgs:
         if self.preprocessing_workers == -1:
             # Set to all available CPUs, handle SLURM case when only some CPUs are available to the job
             self.preprocessing_workers = int(os.environ.get("SLURM_JOB_CPUS_PER_NODE", multiprocessing.cpu_count()))
+
+        self.train_files = self.train_files.split(",")
+        self.val_files = self.val_files.split(",")
+        self.use_n_train_datasets = len(self.train_files)
+        self.use_n_val_datasets = len(self.val_files)

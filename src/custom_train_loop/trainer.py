@@ -8,10 +8,10 @@ class CustomTrainer(Trainer):
     def __init__(
         self,
         monitor: str,
-        min_delta: float = 0.0,
-        patience: int = 3,
-        mode: str = "min",
-        num_datasets: int = 1,
+        min_delta: float,
+        patience: int,
+        mode: str,
+        num_datasets: int,
         **kwargs,
     ):
         super().__init__(**kwargs)

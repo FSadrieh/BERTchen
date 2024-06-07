@@ -102,6 +102,8 @@ def main(args: TrainingArgs):
                 **model_args,
                 model_name_or_path=args.hf_model_name,
                 from_scratch=args.from_scratch,
+                tokenizer_vocab_size=tokenizer.vocab_size,
+                use_n_val_datasets=args.use_n_val_datasets,
             )
             torch_load = torch.load(args.saved_checkpoint_path, map_location=torch.device("cpu"))
             model.load_state_dict(torch_load["state_dict"], strict=False)
@@ -111,6 +113,7 @@ def main(args: TrainingArgs):
             model_name_or_path=args.hf_model_name,
             from_scratch=args.from_scratch,
             tokenizer_vocab_size=tokenizer.vocab_size,
+            use_n_val_datasets=args.use_n_val_datasets,
         )
 
     if args.task == "question-answering":
@@ -118,6 +121,7 @@ def main(args: TrainingArgs):
             model=model.model,
             **model_args,
             num_labels=args.num_labels,
+            finetune_last_layer=args.finetune_last_layer,
         )
     elif args.task == "sequence-classification":
         model = SCBERT(
@@ -125,6 +129,7 @@ def main(args: TrainingArgs):
             **model_args,
             num_labels=args.num_labels,
             classifier_dropout=args.classifier_dropout,
+            finetune_last_layer=args.finetune_last_layer,
         )
 
     if not args.resume:
@@ -193,14 +198,17 @@ def main(args: TrainingArgs):
         gradient_clip_val=args.grad_clip,
         accumulate_grad_batches=args.gradient_accumulation_steps,
         fast_dev_run=args.fast_dev_run,
-        limit_val_batches=None if args.eval_samples == -1 else (args.eval_samples // args.eval_micro_batch_size),
+        limit_val_batches=(None
+        if args.eval_samples == -1
+        else (args.eval_samples // (args.eval_micro_batch_size_multiplier * args.micro_batch_size[-1]))),
         inference_mode=not args.compile,  # inference_mode for val/test and PyTorch 2.0 compiler don't like each other
         limit_train_batches=None if args.steps_per_seq_length == -1 else args.steps_per_seq_length,
         reload_dataloaders_every_n_epochs=args.reload_dataloaders_every_n_epochs,
         monitor="val/loss",
-        min_delta=args.dataset_switching_delta, 
+        min_delta=args.dataset_switching_delta,
         patience=args.dataset_switching_patience,
-        num_datasets=args.use_n_training_datasets, 
+        num_datasets=args.use_n_train_datasets,
+        mode="min",
     )
 
     if current_process_rank == 0:
@@ -210,7 +218,7 @@ def main(args: TrainingArgs):
             f"Validation Frequency: {args.eval_interval} | "
             f"Model Log Frequency: {args.save_interval} | "
             f"Effective batch size: {args.batch_size} | "
-            f"Micro batch size (per device and forward pass): {args.eval_micro_batch_size} | "
+            f"Micro batch size (per device and forward pass): {args.eval_micro_batch_size_multiplier * args.micro_batch_size[-1]} | "
             f"Gradient accumulation steps: {args.gradient_accumulation_steps} | "
         )
 
