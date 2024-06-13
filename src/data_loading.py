@@ -19,12 +19,14 @@ class LMDataModule(L.LightningDataModule):
         self,
         training_args: "TrainingArgs",
         tokenizer: PreTrainedTokenizerFast,
+        train_files: list[str],
+        val_files: list[str],
     ):
         super().__init__()
         self.args = training_args
         self.data_dir = training_args.data_dir
-        self.train_files = [str(self.data_dir / self.args.train_files[i]) for i in range(self.args.use_n_train_datasets)]
-        self.val_files = [str(self.data_dir / self.args.val_files[i]) for i in range(self.args.use_n_val_datasets)]
+        self.train_files = [str(self.data_dir / train_files[i]) for i in range(self.args.use_n_train_datasets)]
+        self.val_files = [str(self.data_dir / val_files[i]) for i in range(self.args.use_n_val_datasets)]
 
         logger.debug(f"Train file path: {self.train_files[0]} val file path: {self.val_files[0]}")
 
@@ -145,7 +147,7 @@ class LMDataModule(L.LightningDataModule):
             return DataLoader(
                 self.val_dataset,
                 **common_args,
-                batch_size=self.args.micro_batch_size[-1] * self.args.eval_micro_batch_size_multiplier,
+                batch_size=self.args.eval_micro_batch_size[-1],
             )
 
         dataloaders = []
@@ -154,7 +156,9 @@ class LMDataModule(L.LightningDataModule):
                 DataLoader(
                     self.val_datasets[i],
                     **common_args,
-                    batch_size=self.args.micro_batch_size[i] * self.args.eval_micro_batch_size_multiplier,
+                    batch_size=self.args.eval_micro_batch_size[i]
+                    if self.use_n_train_datasets > 1
+                    else self.args.eval_micro_batch_size[-1],
                 )
             )
         return dataloaders

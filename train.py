@@ -9,8 +9,9 @@ from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint, Ea
 from lightning.pytorch.loggers.wandb import WandbLogger
 from lightning.pytorch.plugins.environments import LightningEnvironment, SLURMEnvironment
 from print_on_steroids import graceful_exceptions, logger
-from simple_parsing import parse
+from simple_parsing import parse, parse_known_args
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
+import yaml
 
 from args import TrainingArgs
 from dlib import CUDAMetricsCallback, WandbCleanupDiskAndCloudSpaceCallback, get_rank, log_slurm_info
@@ -28,9 +29,15 @@ WANDB_PROJECT = "bert-pretraining"
 WANDB_ENTITY = "raphael-team"
 
 
-def main(args: TrainingArgs):
+def main(is_sweep=None, config_path=None):
     ########### CUDA checks ###########
     current_process_rank = get_rank()
+    if is_sweep:
+        wandb.init()
+        args, __ = parse_known_args(TrainingArgs, config_path=config_path)
+        args.update_from_dict(wandb.config)
+    else:
+        args = parse(TrainingArgs, add_config_path_arg=True)
     logger.config(rank=current_process_rank, print_rank0_only=True)
     if args.accelerator == "cuda":
         num_available_gpus = torch.cuda.device_count()
@@ -62,19 +69,44 @@ def main(args: TrainingArgs):
         **wandb_extra_args,
     )
     wandb_logger.log_hyperparams(dataclasses.asdict(args))
+
+    # Define new wandb metrics
+    wandb.define_metric("progress/samples")
+    wandb.define_metric("progress/tokens")
+    wandb.define_metric("progress/masked_tokens")
     if current_process_rank == 0:
         logger.info(args)
     if current_process_rank == 0 and not args.resume and not args.offline:
         if args.run_name is None:
             logger.warning("No run name specified with `--run_name`. Using W&B default (randomly generated name).")
-        else:
-            assert wandb_logger.version is not None
-            wandb_logger.experiment.name = (
-                args.run_name + "-" + wandb_logger.version
-            )  # Append id to name for easier recognition in W&B UI
     IS_ON_SLURM = SLURMEnvironment.detect()
     if IS_ON_SLURM and current_process_rank == 0:
         log_slurm_info()
+
+    # Specify the train and val files
+    if args.dataset_yml:
+        yml_file_path = str(args.data_dir / args.dataset_yml)
+        with open(yml_file_path, "r") as f:
+            dataset_yml = yaml.safe_load(f)
+        train_files, val_files = [], []
+        val_set_to_seq_len = {}
+        count = 0
+        for key in dataset_yml.keys():
+            if key.startswith("train"):
+                train_files.append(key)
+            elif key.startswith("dev"):
+                val_files.append(key)
+                val_set_to_seq_len[count] = f"val/loss_{dataset_yml[key]['seq_len']}"
+                count += 1
+        monitor_loss = val_set_to_seq_len[len(val_files) - 1]
+        args.use_n_train_datasets = len(train_files)
+        args.use_n_val_datasets = len(val_files)
+    else:
+        train_files = args.train_files
+        val_files = args.val_files
+        val_set_to_seq_len = None
+        # This can be wrong. Better specify a yml_file
+        monitor_loss = "val/loss" if args.use_n_val_datasets == 1 else "val/loss_512"
 
     ################# Construct model ##############
 
@@ -104,6 +136,7 @@ def main(args: TrainingArgs):
                 from_scratch=args.from_scratch,
                 tokenizer_vocab_size=tokenizer.vocab_size,
                 use_n_val_datasets=args.use_n_val_datasets,
+                val_set_to_seq_len=val_set_to_seq_len,
             )
             torch_load = torch.load(args.saved_checkpoint_path, map_location=torch.device("cpu"))
             model.load_state_dict(torch_load["state_dict"], strict=False)
@@ -114,6 +147,7 @@ def main(args: TrainingArgs):
             from_scratch=args.from_scratch,
             tokenizer_vocab_size=tokenizer.vocab_size,
             use_n_val_datasets=args.use_n_val_datasets,
+            val_set_to_seq_len=val_set_to_seq_len,
         )
 
     if args.task == "question-answering":
@@ -151,18 +185,19 @@ def main(args: TrainingArgs):
         model = torch.compile(model)
 
     #################### Construct dataloaders & trainer #################
-    dm = LMDataModule(training_args=args, tokenizer=tokenizer)
+    dm = LMDataModule(training_args=args, tokenizer=tokenizer, train_files=train_files, val_files=val_files)
     lr_monitor = LearningRateMonitor(logging_interval="step")
     wandb_disk_cleanup_callback = WandbCleanupDiskAndCloudSpaceCallback(cleanup_local=True, cleanup_online=False, size_limit=20)
     checkpoint_callback = ModelCheckpoint(
+        dirpath=f"logs/bert-pretraining/{args.run_name}/checkpoints/",
         filename="snap-{step}-samples-{progress/samples}-{progress/tokens}-loss-{val/loss:.2f}",
-        monitor="val/loss",
+        monitor=monitor_loss,
         mode="min",
         auto_insert_metric_name=False,
         every_n_train_steps=int(args.save_interval),
     )
     early_stopping_callback = EarlyStopping(
-        monitor="val/loss", min_delta=args.early_stopping_delta, patience=args.early_stopping_patience
+        monitor=monitor_loss, min_delta=args.early_stopping_delta, patience=args.early_stopping_patience
     )
     callbacks = [
         checkpoint_callback,
@@ -198,17 +233,16 @@ def main(args: TrainingArgs):
         gradient_clip_val=args.grad_clip,
         accumulate_grad_batches=args.gradient_accumulation_steps,
         fast_dev_run=args.fast_dev_run,
-        limit_val_batches=(None
-        if args.eval_samples == -1
-        else (args.eval_samples // (args.eval_micro_batch_size_multiplier * args.micro_batch_size[-1]))),
+        limit_val_batches=(None if args.eval_samples == -1 else (args.eval_samples // args.eval_micro_batch_size[-1])),
         inference_mode=not args.compile,  # inference_mode for val/test and PyTorch 2.0 compiler don't like each other
         limit_train_batches=None if args.steps_per_seq_length == -1 else args.steps_per_seq_length,
         reload_dataloaders_every_n_epochs=args.reload_dataloaders_every_n_epochs,
-        monitor="val/loss",
+        monitor=monitor_loss,
         min_delta=args.dataset_switching_delta,
         patience=args.dataset_switching_patience,
         num_datasets=args.use_n_train_datasets,
         mode="min",
+        max_time=args.max_time,
     )
 
     if current_process_rank == 0:
@@ -218,7 +252,7 @@ def main(args: TrainingArgs):
             f"Validation Frequency: {args.eval_interval} | "
             f"Model Log Frequency: {args.save_interval} | "
             f"Effective batch size: {args.batch_size} | "
-            f"Micro batch size (per device and forward pass): {args.eval_micro_batch_size_multiplier * args.micro_batch_size[-1]} | "
+            f"Micro batch size (per device and forward pass): {args.eval_micro_batch_size[-1]} | "
             f"Gradient accumulation steps: {args.gradient_accumulation_steps} | "
         )
 
@@ -262,7 +296,6 @@ def main(args: TrainingArgs):
 
 
 if __name__ == "__main__":
-    parsed_arg_groups = parse(TrainingArgs, add_config_path_arg=True)
     current_process_rank = get_rank()
     with graceful_exceptions(extra_message=f"Rank: {current_process_rank}"):
-        main(parsed_arg_groups)
+        main()

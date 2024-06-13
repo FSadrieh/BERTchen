@@ -15,7 +15,7 @@ class TrainingArgs:
 
     data_dir: Path = field(alias="-d")
 
-    hf_model_name: str = field(default="google-bert/bert-base-uncased", alias="--model")
+    hf_model_name: str = field(default="mosaicml/mosaic-bert-base", alias="--model")
     "HuggingFace model identifier. This is used to construct the model architecture and load pretrained weights if not specified otherwise."
 
     from_scratch: bool = field(default=True)
@@ -32,7 +32,10 @@ class TrainingArgs:
     val_files: str = field(default="dev.jsonl")
     "Name of the validation file."
 
-    tokenizer_path: str | None = field(default=None)
+    dataset_yml: str | None = field(default=None)
+    "Path to a dataset yml file. This overrides the train_files and val_files, you only need to specify this."
+
+    tokenizer_path: str | None = field(default="google-bert/bert-base-uncased")
     "Path to a saved tokenizer to switch the vocabulary. If None, use the hf_model_name."
 
     ###############################
@@ -92,8 +95,8 @@ class TrainingArgs:
     You should tune this so that you do not get GPU RAM OOM errors. We automatically calculate the gradient accumulation steps to achieve your desired `batch_size`.
     For each dataset you can have one batch size. Specify them for the datasets in the order they are loaded."""
 
-    eval_micro_batch_size_multiplier: int = field(default=1)
-    "If 1 use micro_batch_size[-1] for evaluation. Else use eval_micro_batch_size_multiplier * micro_batch_size."
+    eval_micro_batch_size: list[int] = field(default=None)
+    "If 1 use micro_batch_size[-1] for evaluation. Else use eval_micro_batch_size * micro_batch_size."
 
     gradient_accumulation_steps: int = field(default=-1)
     "If -1, set automatically based on batch_size and micro_batch_size."
@@ -109,6 +112,9 @@ class TrainingArgs:
     ############################
     ###### Logging & Misc ######
     ############################
+
+    max_time: str = field(default="00:00:00:00")
+    "Specify in the format 'days:hours:minutes:seconds'. If '00:00:00:00', no time limit."
 
     run_name: str = field(default=None, alias="-n")
     "Run name for logging."
@@ -225,3 +231,8 @@ class TrainingArgs:
         self.val_files = self.val_files.split(",")
         self.use_n_train_datasets = len(self.train_files)
         self.use_n_val_datasets = len(self.val_files)
+
+        self.eval_micro_batch_size = self.eval_micro_batch_size if self.eval_micro_batch_size else self.micro_batch_size[-1]
+
+        if self.max_time == "00:00:00:00":
+            self.max_time = None

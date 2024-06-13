@@ -23,6 +23,7 @@ class PretrainBERT(L.LightningModule):
         warmup_period: int,
         eval_interval: int,
         tokenizer_vocab_size: int,
+        val_set_to_seq_len: dict,
         epsilon: float = 1e-8,
         save_hyperparameters: bool = True,
         use_n_val_datasets: int = 1,
@@ -64,12 +65,15 @@ class PretrainBERT(L.LightningModule):
         self.start = torch.cuda.Event(enable_timing=True)
         self.end = torch.cuda.Event(enable_timing=True)
 
-        self.val_dataloader_to_seq_len = {
-            0: "val/loss_64" if use_n_val_datasets > 1 else "val/loss",
-            1: "val/loss_128",
-            2: "val/loss_256",
-            3: "val/loss_512",
-        }
+        if val_set_to_seq_len:
+            self.val_dataloader_to_seq_len = val_set_to_seq_len
+        else:
+            self.val_dataloader_to_seq_len = {
+                0: "val/loss_64" if use_n_val_datasets > 1 else "val/loss",
+                1: "val/loss_128",
+                2: "val/loss_256",
+                3: "val/loss_512",
+            }
 
     def forward(self, input_ids, attention_mask, labels, token_type_ids=None):
         last_hidden_states = self.model(input_ids, attention_mask, output_hidden_states=True)[0]
@@ -90,7 +94,14 @@ class PretrainBERT(L.LightningModule):
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
         loss = self(**batch)
-        self.log(self.val_dataloader_to_seq_len[dataloader_idx], loss, on_step=False, on_epoch=True, sync_dist=True)
+        self.log(
+            self.val_dataloader_to_seq_len[dataloader_idx],
+            loss,
+            on_step=False,
+            on_epoch=True,
+            sync_dist=True,
+            add_dataloader_idx=False,
+        )
 
     def configure_optimizers(self):
         return configure_optimizer(

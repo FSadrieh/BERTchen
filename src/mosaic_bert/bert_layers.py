@@ -66,7 +66,7 @@ try:
     from flash_attn import flash_attn_qkvpacked_func  # type: ignore
 
     installed_version = importlib.metadata.version("flash_attn")  # type: ignore
-    if installed_version < "2.4.2" or torch.cuda.get_device_capability(0) == (7, 5):
+    if installed_version < "2.4.2" or not torch.cuda.is_available() or torch.cuda.get_device_capability(0) == (7, 5):
         raise ImportError("newer version of flash_attn required (>= 2.4.2) or Turing GPU required")
     logger.info("Using Flash Attention 2 for Mosaic BERT")
     IMPL_USE_FLASH2 = True

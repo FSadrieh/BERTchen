@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Literal
 from itertools import chain
+import yaml
+
 
 import datasets
 import jsonlines
@@ -41,14 +43,16 @@ DATASET_TO_TASK = {
 class Args:
     out_dir: str = field(alias="-o")
 
-    dataset: Literal["c4", "cc100", "oscar2023", "germanquad", "germeval_A", "germeval_B"] = field(default="oscar2023")
+    dataset: Literal["c4", "cc100", "CulturaX", "germanquad", "germeval_A", "germeval_B"] = field(
+        default="CulturaX"
+    )
     "HF dataset"
 
     max_train_size: int = field(default=-1)
     "Maximum number of train documents to write to disk. Use to limit very large datasets that you will not exhaust during training anyway. Use -1 to disable."
 
     dev_size: int = field(default=2_500)
-    "If 0, do not construct dev set."
+    "If 0, do not construct dev set. -1 means use all data if a dev_set is available."
 
     test_size: int = field(default=0)
     "If 0, do not construct test set."
@@ -78,7 +82,7 @@ class Args:
     data_location: str = field(default="default")
     "We first check if we have downloaded the data already in this location, before we download it again."
 
-    tokenizer: str = field(default="google-bert/bert-base-uncased")
+    tokenizer: str = field(default="tokenizer")
     "HuggingFace tokenizer identifier."
 
     train_sequence_lengths: str = field(default=None, alias="--tsl")
@@ -89,6 +93,9 @@ class Args:
 
     dataset_size_splits: str = field(default=None)
     "If set it will determine, the sizes of the different train datasets. Format: 0.5,0.25,0.25 (For len(train_sequence_lengths) = 3)"
+
+    strategy: Literal["naive", "sorted"] = field(default="naive")
+    "Strategy to split the dataset into different training datasets. Only used if task is pre-training and we have more than one datasets."
 
 
 def load_and_process_germaneval(
@@ -142,37 +149,17 @@ def load_and_process_germaneval(
     return (train_dataset, dev_dataset)
 
 
-def process_oscar(dataset: datasets.Dataset):
-    # if dataset_name == "oscar2023":
-    # For oscar2023, we need to rename the columns to match the other datasets
-    # dataset = dataset.rename_column("content", "text")
-
-    # Filter out all samples with content warning in OSCAR
-    dataset = dataset.filter(
-        lambda x: x["meta"]["quality_warnings"] is None
-        or (
-            "noisy" not in x["meta"]["quality_warnings"]
-            and "header" not in x["meta"]["quality_warnings"]
-            and "footer" not in x["meta"]["quality_warnings"]
-            and "short_sentences" not in x["meta"]["quality_warnings"]
-            and "tiny" not in x["meta"]["quality_warnings"]
-            and "adult" not in x["meta"]["quality_warnings"]
-        ),
-    )
-    return (dataset, None)
-
-
 def load_right_dataset(
     dataset_name: str, tmp_cache_dir: str, data_location: str, split: str, processes: int
 ) -> tuple[datasets.Dataset, datasets.Dataset]:
-    def _load_dataset(loading_args: dict, local_path: str, hf_path: str, extra_loading_args: dict = None):
+    def _load_dataset(loading_args: dict, local_path: str, hf_path: str, extra_loading_args: dict = None, token=False):
         try:
             return load_dataset("json", **loading_args, data_files={"train": local_path})
         except FileNotFoundError:
             logger.info(f"Could not find dataset in {local_path}, downloading it...")
         if extra_loading_args:
             loading_args.update(extra_loading_args)
-        return load_dataset(**loading_args, path=hf_path)
+        return load_dataset(**loading_args, path=hf_path, token=token)
 
     def _file_location(dataset_name: str):
         return f"{DEFAULT_DATA_LOCATION}/{dataset_name}/{split}.jsonl" if data_location == "default" else data_location
@@ -186,18 +173,17 @@ def load_right_dataset(
         extra_loading_args = {"name": "de"}
         dataset = _load_dataset(default_loading_args, _file_location("c4"), "allenai/c4", extra_loading_args)
         return (dataset, None)
-    # The german split of c4 has about 25 million rows (18 GB)
+    if dataset_name == "CulturaX":
+        extra_loading_args = {"name": "de"}
+        dataset = _load_dataset(
+            default_loading_args, _file_location("CulturaX"), "uonlp/CulturaX", extra_loading_args, token=True
+        )
+        dataset = dataset.remove_columns(["url", "timestamp", "source"])
+        return (dataset, None)
     if dataset_name == "cc100":
         extra_loading_args = {"lang": "de"}
         dataset = _load_dataset(default_loading_args, _file_location("cc100"), "cc100", extra_loading_args)
         return (dataset, None)
-    # The german split of oscar has about 594.7 GB
-    if dataset_name == "oscar2023":
-        extra_loading_args = {"token": True, "language": "de"}
-        dataset = _load_dataset(
-            default_loading_args, _file_location("oscar2023"), "oscar-corpus/OSCAR-2023", extra_loading_args
-        )
-        return process_oscar(dataset)
 
     if dataset_name == "germanquad":
         dataset = _load_dataset(default_loading_args, _file_location("germanquad"), "deepset/germanquad")
@@ -232,7 +218,6 @@ def make_tokenize_function(tokenizer, task_type, max_seq_length=None, truncate=T
             padding=False,
             truncation=truncate,
             max_length=max_seq_length,
-            add_special_tokens=False,
         )
         return {**tokenized, "labels": examples["label"]}
 
@@ -267,7 +252,6 @@ def make_tokenize_function(tokenizer, task_type, max_seq_length=None, truncate=T
         return tokenizer(
             text,
             padding=False,
-            add_special_tokens=False,
         )
 
     if task_type == "sequence-classification":
@@ -403,35 +387,58 @@ def process_pre_training_dataset(
     training_seq_lens,
     validation_seq_lens,
     dataset_size_splits,
+    strategy,
 ):
     processed_dataset = tokenize_dataset(dataset, tokenizer, max_seq_length, task_type, processes)
+    if strategy == "sorted":
+        processed_dataset = sort_dataset_by_length(processed_dataset)
     processed_dataset = group_text(processed_dataset, max_seq_length, tokenizer)
-    processed_dataset, total_len = shuffle_dataset_and_log_length(processed_dataset)
+    if strategy == "sorted":
+        total_len = len(processed_dataset)
+    else:
+        processed_dataset, total_len = shuffle_dataset_and_log_length(processed_dataset)
     train_paragraphs, dev_paragraphs = generate_val_split(processed_dataset, total_len, dev_size)
+    content = {}
+
     if len(training_seq_lens) > 1:
         # We want to split the train_paragraphs into n datasets
-        dataset_splits = split_dataset(train_paragraphs, dataset_size_splits, training_seq_lens)
+        dataset_splits = split_dataset(train_paragraphs, dataset_size_splits, training_seq_lens, max_seq_length, strategy)
         for i, split in enumerate(dataset_splits):
             if i == len(training_seq_lens) - 1:
-                split = cap_training_examples(train_paragraphs, max_train_size)
-            write_to_disk(split, None, out_dir, part_name=i)
+                split = cap_training_examples(split, max_train_size)
+            # write_to_disk(split, None, out_dir, part_name=i)
+            content[f"train_{i}.jsonl"] = {"seq_len": training_seq_lens[i], "size": len(split)}
 
     else:
+        if training_seq_lens[0] != max_seq_length:
+            train_paragraphs = change_packed_seq_len(train_paragraphs, training_seq_lens[0])
         train_paragraphs = cap_training_examples(train_paragraphs, max_train_size)
-        write_to_disk(train_paragraphs, None, out_dir)
+        # write_to_disk(train_paragraphs, None, out_dir)
+        content["train.jsonl"] = {"seq_len": training_seq_lens[0], "size": len(train_paragraphs)}
 
     if len(validation_seq_lens) > 1:
         # We want to put the same dev_paragraphs into n datasets with differing sequence length
-        for i in range(len(validation_seq_lens) - 1):
-            dataset = change_packed_seq_len(dev_paragraphs, validation_seq_lens[i])
-            write_to_disk(None, dataset, out_dir, part_name=i)
-        write_to_disk(None, dev_paragraphs, out_dir, part_name=len(validation_seq_lens) - 1)
+        for i, seq_len in enumerate(validation_seq_lens):
+            if seq_len != max_seq_length:
+                dataset = change_packed_seq_len(dev_paragraphs, seq_len)
+            else:
+                dataset = dev_paragraphs
+                write_to_disk(None, dataset, out_dir, part_name=i)
+            content[f"dev_{i}.jsonl"] = {"seq_len": seq_len, "size": len(dataset)}
 
     else:
-        write_to_disk(None, dev_paragraphs, out_dir)
+        if validation_seq_lens[0] != max_seq_length:
+            dev_paragraphs = change_packed_seq_len(dev_paragraphs, validation_seq_lens[0])
+        # write_to_disk(None, dev_paragraphs, out_dir)
+        content["dev.jsonl"] = {"seq_len": validation_seq_lens[0], "size": len(dev_paragraphs)}
+
+    # Write yml file indicating which dataset has which sequence length and size
+    if content:
+        with open(os.path.join(out_dir, "dataset_info.yml"), "w") as f:
+            yaml.dump(content, f)
 
 
-def split_dataset(train_paragraphs, dataset_size_splits, training_seq_lens, strategy="naive"):
+def split_dataset(train_paragraphs, dataset_size_splits, training_seq_lens, max_seq_length, strategy):
     """
     This function selects the splits for the different training datasets.
     In the future it should support different strategies.
@@ -441,11 +448,28 @@ def split_dataset(train_paragraphs, dataset_size_splits, training_seq_lens, stra
         end = len(train_paragraphs)
         for i in range(len(training_seq_lens) - 1):
             beginning = int(end - len(train_paragraphs) * dataset_size_splits[i])
-            splits.append(change_packed_seq_len(train_paragraphs.select(range(beginning, end)), training_seq_lens[i]))
+            split = train_paragraphs.select(range(beginning, end))
+            if training_seq_lens[i] != max_seq_length:
+                split = change_packed_seq_len(split, training_seq_lens[i])
+            splits.append(split)
             end = beginning
-        splits.append(change_packed_seq_len(train_paragraphs.select(range(end)), training_seq_lens[-1]))
+        split = train_paragraphs.select(range(end))
+        if training_seq_lens[-1] != max_seq_length:
+            split = change_packed_seq_len(split, training_seq_lens[-1])
+        splits.append(split)
 
     return splits
+
+
+def sort_dataset_by_length(dataset):
+    # TODO: Does not work right now
+    def _length(x):
+        x["length"] = len(x["input_ids"])
+        return x
+
+    dataset_with_lengths = dataset.map(_length, batched=True, desc="Calculating lengths", remove_columns=dataset.column_names)
+    dataset_with_lengths.sort("length", reverse=True)
+    return dataset_with_lengths
 
 
 def process_fine_tuning_dataset(
@@ -462,7 +486,7 @@ def process_fine_tuning_dataset(
         train_paragraphs, dev_paragraphs = generate_val_split(processed_datasets[0], total_len, dev_size)
     else:
         train_paragraphs = processed_datasets[0]
-        dev_paragraphs = processed_datasets[1].select(range(dev_size))
+        dev_paragraphs = processed_datasets[1].select(range(dev_size)) if dev_size != -1 else processed_datasets[1]
     train_paragraphs = cap_training_examples(train_paragraphs, max_train_size)
     write_to_disk(train_paragraphs, dev_paragraphs, out_dir)
 
@@ -596,6 +620,7 @@ def main(args: Args):
             training_seq_lens=training_seq_lens,
             validation_seq_lens=validation_seq_lens,
             dataset_size_splits=dataset_size_splits,
+            strategy=args.strategy,
         )
     else:
         process_fine_tuning_dataset(train_val_datasets, **process_args)
@@ -616,3 +641,7 @@ if __name__ == "__main__":
     if args.debug:
         wait_for_debugger()
     main(args)
+    # We want to save the hyperparameters of this data download
+    content = vars(args)
+    with open(os.path.join(args.out_dir, "dataset_hyperparams.yml"), "w") as f:
+        yaml.dump(content, f)
