@@ -32,7 +32,7 @@ DEFAULT_DATA_LOCATION = "/hpi/fs00/share/fg-demelo/efficient-bert-pretraining/da
 DATASET_TO_TASK = {
     "c4": "pre-training",
     "cc100": "pre-training",
-    "oscar2023": "pre-training",
+    "CulturaX": "pre-training",
     "germanquad": "question-answering",
     "germeval_A": "sequence-classification",
     "germeval_B": "sequence-classification",
@@ -43,9 +43,7 @@ DATASET_TO_TASK = {
 class Args:
     out_dir: str = field(alias="-o")
 
-    dataset: Literal["c4", "cc100", "CulturaX", "germanquad", "germeval_A", "germeval_B"] = field(
-        default="CulturaX"
-    )
+    dataset: Literal["c4", "cc100", "CulturaX", "germanquad", "germeval_A", "germeval_B"] = field(default="CulturaX")
     "HF dataset"
 
     max_train_size: int = field(default=-1)
@@ -172,13 +170,14 @@ def load_right_dataset(
     if dataset_name == "c4":
         extra_loading_args = {"name": "de"}
         dataset = _load_dataset(default_loading_args, _file_location("c4"), "allenai/c4", extra_loading_args)
+        dataset = dataset.select_columns(["text"])
         return (dataset, None)
     if dataset_name == "CulturaX":
         extra_loading_args = {"name": "de"}
         dataset = _load_dataset(
             default_loading_args, _file_location("CulturaX"), "uonlp/CulturaX", extra_loading_args, token=True
         )
-        dataset = dataset.remove_columns(["url", "timestamp", "source"])
+        dataset = dataset.select_columns(["text"])
         return (dataset, None)
     if dataset_name == "cc100":
         extra_loading_args = {"lang": "de"}
@@ -406,14 +405,14 @@ def process_pre_training_dataset(
         for i, split in enumerate(dataset_splits):
             if i == len(training_seq_lens) - 1:
                 split = cap_training_examples(split, max_train_size)
-            # write_to_disk(split, None, out_dir, part_name=i)
+            write_to_disk(split, None, out_dir, part_name=i)
             content[f"train_{i}.jsonl"] = {"seq_len": training_seq_lens[i], "size": len(split)}
 
     else:
         if training_seq_lens[0] != max_seq_length:
             train_paragraphs = change_packed_seq_len(train_paragraphs, training_seq_lens[0])
         train_paragraphs = cap_training_examples(train_paragraphs, max_train_size)
-        # write_to_disk(train_paragraphs, None, out_dir)
+        write_to_disk(train_paragraphs, None, out_dir)
         content["train.jsonl"] = {"seq_len": training_seq_lens[0], "size": len(train_paragraphs)}
 
     if len(validation_seq_lens) > 1:
@@ -423,13 +422,13 @@ def process_pre_training_dataset(
                 dataset = change_packed_seq_len(dev_paragraphs, seq_len)
             else:
                 dataset = dev_paragraphs
-                write_to_disk(None, dataset, out_dir, part_name=i)
+            write_to_disk(None, dataset, out_dir, part_name=i)
             content[f"dev_{i}.jsonl"] = {"seq_len": seq_len, "size": len(dataset)}
 
     else:
         if validation_seq_lens[0] != max_seq_length:
             dev_paragraphs = change_packed_seq_len(dev_paragraphs, validation_seq_lens[0])
-        # write_to_disk(None, dev_paragraphs, out_dir)
+        write_to_disk(None, dev_paragraphs, out_dir)
         content["dev.jsonl"] = {"seq_len": validation_seq_lens[0], "size": len(dev_paragraphs)}
 
     # Write yml file indicating which dataset has which sequence length and size
@@ -444,31 +443,29 @@ def split_dataset(train_paragraphs, dataset_size_splits, training_seq_lens, max_
     In the future it should support different strategies.
     """
     splits = []
-    if strategy == "naive":
-        end = len(train_paragraphs)
-        for i in range(len(training_seq_lens) - 1):
-            beginning = int(end - len(train_paragraphs) * dataset_size_splits[i])
-            split = train_paragraphs.select(range(beginning, end))
-            if training_seq_lens[i] != max_seq_length:
-                split = change_packed_seq_len(split, training_seq_lens[i])
-            splits.append(split)
-            end = beginning
-        split = train_paragraphs.select(range(end))
-        if training_seq_lens[-1] != max_seq_length:
-            split = change_packed_seq_len(split, training_seq_lens[-1])
+    end = len(train_paragraphs)
+    for i in range(len(training_seq_lens) - 1):
+        beginning = int(end - len(train_paragraphs) * dataset_size_splits[i])
+        split = train_paragraphs.select(range(beginning, end))
+        if training_seq_lens[i] != max_seq_length:
+            split = change_packed_seq_len(split, training_seq_lens[i])
         splits.append(split)
+        end = beginning
+    split = train_paragraphs.select(range(end))
+    if training_seq_lens[-1] != max_seq_length:
+        split = change_packed_seq_len(split, training_seq_lens[-1])
+    splits.append(split)
 
     return splits
 
 
 def sort_dataset_by_length(dataset):
-    # TODO: Does not work right now
     def _length(x):
-        x["length"] = len(x["input_ids"])
+        x["length"] = [len(i) for i in x["input_ids"]]
         return x
 
-    dataset_with_lengths = dataset.map(_length, batched=True, desc="Calculating lengths", remove_columns=dataset.column_names)
-    dataset_with_lengths.sort("length", reverse=True)
+    dataset_with_lengths = dataset.map(_length, batched=True, desc="Calculating lengths")
+    dataset_with_lengths = dataset_with_lengths.sort("length", reverse=True)
     return dataset_with_lengths
 
 
@@ -494,7 +491,7 @@ def process_fine_tuning_dataset(
 def tokenize_dataset(dataset, tokenizer, max_seq_length, task_type, processes):
     return dataset.map(
         make_tokenize_function(tokenizer, max_seq_length=max_seq_length, task_type=task_type),
-        batch_size=1_000,
+        batch_size=16_000,
         batched=True,
         num_proc=processes,
         remove_columns=dataset.column_names,
@@ -525,7 +522,7 @@ def cap_training_examples(train_paragraphs, max_train_size):
 def group_text(processed_dataset, max_seq_length, tokenizer):
     return processed_dataset.map(
         make_group_text_function(max_seq_length, tokenizer),
-        batch_size=1_000,
+        batch_size=16_000,
         batched=True,
         remove_columns=processed_dataset.column_names,
         desc="Grouping texts",
@@ -535,7 +532,7 @@ def group_text(processed_dataset, max_seq_length, tokenizer):
 def change_packed_seq_len(processed_dataset, max_seq_length):
     return processed_dataset.map(
         make_different_seq_len_packing(max_seq_length),
-        batch_size=1_000,
+        batch_size=16_000,
         batched=True,
         remove_columns=processed_dataset.column_names,
         desc=f"Changing packed sequence length to {max_seq_length}",

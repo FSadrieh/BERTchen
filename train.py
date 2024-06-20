@@ -29,15 +29,21 @@ WANDB_PROJECT = "bert-pretraining"
 WANDB_ENTITY = "raphael-team"
 
 
-def main(is_sweep=None, config_path=None):
+def main(is_sweep=None, config_path=None, update_args=None):
     ########### CUDA checks ###########
     current_process_rank = get_rank()
+    # For sweeps we get the params from the sweep config
     if is_sweep:
         wandb.init()
         args, __ = parse_known_args(TrainingArgs, config_path=config_path)
         args.update_from_dict(wandb.config)
+    # If we want to finetune after training, we get the params from the config file
+    elif config_path:
+        args = parse(TrainingArgs, config_path=config_path)
     else:
         args = parse(TrainingArgs, add_config_path_arg=True)
+    if update_args:
+        args.update_from_dict(update_args)
     logger.config(rank=current_process_rank, print_rank0_only=True)
     if args.accelerator == "cuda":
         num_available_gpus = torch.cuda.device_count()
@@ -70,10 +76,6 @@ def main(is_sweep=None, config_path=None):
     )
     wandb_logger.log_hyperparams(dataclasses.asdict(args))
 
-    # Define new wandb metrics
-    wandb.define_metric("progress/samples")
-    wandb.define_metric("progress/tokens")
-    wandb.define_metric("progress/masked_tokens")
     if current_process_rank == 0:
         logger.info(args)
     if current_process_rank == 0 and not args.resume and not args.offline:
@@ -84,7 +86,7 @@ def main(is_sweep=None, config_path=None):
         log_slurm_info()
 
     # Specify the train and val files
-    if args.dataset_yml:
+    if args.dataset_yml != "use_train_val_info":
         yml_file_path = str(args.data_dir / args.dataset_yml)
         with open(yml_file_path, "r") as f:
             dataset_yml = yaml.safe_load(f)
@@ -107,6 +109,8 @@ def main(is_sweep=None, config_path=None):
         val_set_to_seq_len = None
         # This can be wrong. Better specify a yml_file
         monitor_loss = "val/loss" if args.use_n_val_datasets == 1 else "val/loss_512"
+
+    assert len(train_files) == len(args.mlm_probabilities), "Number of train files must match number of mlm_probabilities"
 
     ################# Construct model ##############
 
@@ -155,7 +159,6 @@ def main(is_sweep=None, config_path=None):
             model=model.model,
             **model_args,
             num_labels=args.num_labels,
-            finetune_last_layer=args.finetune_last_layer,
         )
     elif args.task == "sequence-classification":
         model = SCBERT(
@@ -163,7 +166,6 @@ def main(is_sweep=None, config_path=None):
             **model_args,
             num_labels=args.num_labels,
             classifier_dropout=args.classifier_dropout,
-            finetune_last_layer=args.finetune_last_layer,
         )
 
     if not args.resume:
@@ -203,7 +205,7 @@ def main(is_sweep=None, config_path=None):
         checkpoint_callback,
         wandb_disk_cleanup_callback,
         lr_monitor,
-        ProgressMetricCallback(),
+        # ProgressMetricCallback(),
         early_stopping_callback,
     ]
     if args.accelerator == "cuda":
@@ -233,7 +235,7 @@ def main(is_sweep=None, config_path=None):
         gradient_clip_val=args.grad_clip,
         accumulate_grad_batches=args.gradient_accumulation_steps,
         fast_dev_run=args.fast_dev_run,
-        limit_val_batches=(None if args.eval_samples == -1 else (args.eval_samples // args.eval_micro_batch_size[-1])),
+        limit_val_batches=(None if args.eval_samples == -1 else (args.eval_samples // args.eval_micro_batch_sizes[-1])),
         inference_mode=not args.compile,  # inference_mode for val/test and PyTorch 2.0 compiler don't like each other
         limit_train_batches=None if args.steps_per_seq_length == -1 else args.steps_per_seq_length,
         reload_dataloaders_every_n_epochs=args.reload_dataloaders_every_n_epochs,
@@ -252,7 +254,7 @@ def main(is_sweep=None, config_path=None):
             f"Validation Frequency: {args.eval_interval} | "
             f"Model Log Frequency: {args.save_interval} | "
             f"Effective batch size: {args.batch_size} | "
-            f"Micro batch size (per device and forward pass): {args.eval_micro_batch_size[-1]} | "
+            f"Micro batch size (per device and forward pass): {args.eval_micro_batch_sizes[-1]} | "
             f"Gradient accumulation steps: {args.gradient_accumulation_steps} | "
         )
 
@@ -294,8 +296,22 @@ def main(is_sweep=None, config_path=None):
 
             logger.success("Saving finished!")
 
+        return args.finetune_cfgs_after_training, args.run_name
+
 
 if __name__ == "__main__":
     current_process_rank = get_rank()
     with graceful_exceptions(extra_message=f"Rank: {current_process_rank}"):
-        main()
+        finetune_cfgs_after_training, run_name = main()
+        if finetune_cfgs_after_training:
+            logger.success("Training finished successfully! Now finetuning")
+            model_checkpoint_path = f"logs/bert-pretraining/{run_name}/checkpoints/last_model_ckpt.ckpt"
+            for cfg in finetune_cfgs_after_training:
+                main(
+                    is_sweep=False,
+                    config_path=cfg,
+                    update_args={
+                        "model_checkpoint_path": model_checkpoint_path,
+                        "run_name": run_name + cfg.split("/")[-1].split(".")[0],
+                    },
+                )

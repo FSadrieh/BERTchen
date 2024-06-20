@@ -36,6 +36,7 @@ class LMDataModule(L.LightningDataModule):
         self.iterator_idx = 0
         self.use_n_train_datasets = self.args.use_n_train_datasets
         self.use_n_val_datasets = self.args.use_n_val_datasets
+        self.data_collator = None
 
     def prepare_data(self) -> None:
         for file in self.train_files + self.val_files:
@@ -68,27 +69,30 @@ class LMDataModule(L.LightningDataModule):
         self.train_dataset = self.train_datasets[-1]
         self.val_dataset = self.train_datasets[-1]
 
-        pad_to_multiple_of = 8 if self.args.precision in ["16-mixed", "bf16-mixed"] else None
+        self.pad_to_multiple_of = 8 if self.args.precision in ["16-mixed", "bf16-mixed"] else None
 
-        if self.args.task == "pretraining":
-            self.data_collator = DataCollatorForLanguageModeling(
-                tokenizer=self.tokenizer,
-                mlm=True,
-                pad_to_multiple_of=pad_to_multiple_of,
-                mlm_probability=self.args.mlm_probability,
-            )
-        elif self.args.task == "question-answering":
+        if self.args.task == "question-answering":
             self.data_collator = QADataCollator(
                 tokenizer=self.tokenizer,
                 padding=True,
-                pad_to_multiple_of=pad_to_multiple_of,
+                pad_to_multiple_of=self.pad_to_multiple_of,
             )
-        else:
+        elif self.args.task == "sequence-classification":
             self.data_collator = DataCollatorWithPadding(
                 tokenizer=self.tokenizer,
                 padding=True,
-                pad_to_multiple_of=pad_to_multiple_of,
+                pad_to_multiple_of=self.pad_to_multiple_of,
             )
+        else:
+            self.data_collator = self.create_data_colator(self.args.mlm_probabilities[-1])
+
+    def create_data_colator(self, mlm_probability):
+        return DataCollatorForLanguageModeling(
+            tokenizer=self.tokenizer,
+            mlm=True,
+            pad_to_multiple_of=self.pad_to_multiple_of,
+            mlm_probability=mlm_probability,
+        )
 
     def train_dataloader(self):
         common_args = dict(
@@ -98,19 +102,16 @@ class LMDataModule(L.LightningDataModule):
             ),  # https://discuss.pytorch.org/t/what-are-the-dis-advantages-of-persistent-workers/102110/10
             pin_memory=True,
             shuffle=True,
-            collate_fn=self.data_collator,
         )
 
         if self.use_n_train_datasets == 1 or self.iterator_idx >= len(self.train_datasets):
             dataloader = DataLoader(
-                self.train_dataset,
-                batch_size=self.args.micro_batch_size[-1],
-                **common_args,
+                self.train_dataset, batch_size=self.args.micro_batch_sizes[-1], **common_args, collate_fn=self.data_collator
             )
             logger_text = (
-                f"Switched to final dataset with a micro-batch size {self.args.micro_batch_size[-1]}. It has a length of {len(self.train_dataset)} and sequence length of {len(self.train_dataset[0]['input_ids'])}"
+                f"Switched to final dataset with a micro-batch size {self.args.micro_batch_sizes[-1]}. It has a length of {len(self.train_dataset)}, sequence length of {len(self.train_dataset[0]['input_ids'])} and a mask probability of {self.args.mlm_probabilities[-1]}"
                 if self.iterator_idx >= len(self.train_datasets)
-                else f"Using training dataset with a micro-batch size {self.args.micro_batch_size[-1]}. It has a length of {len(self.train_dataset)} and sequence length of {len(self.train_dataset[0]['input_ids'])} (Note sequence length estimate only makes sense if you have used packing)"
+                else f"Using training dataset with a micro-batch size {self.args.micro_batch_sizes[-1]}. It has a length of {len(self.train_dataset)} and sequence length of {len(self.train_dataset[0]['input_ids'])} (Note sequence length estimate only makes sense if you have used packing)"
             )
             logger.info(
                 logger_text,
@@ -119,16 +120,19 @@ class LMDataModule(L.LightningDataModule):
             self.iterator_idx += 1
             return dataloader
 
+        collator = self.create_data_colator(self.args.mlm_probabilities[self.iterator_idx])
+
         train_dataset = self.train_datasets[self.iterator_idx]
-        batch_size = self.args.micro_batch_size[self.iterator_idx]
+        batch_size = self.args.micro_batch_sizes[self.iterator_idx]
         self.iterator_idx += 1
         logger.info(
-            f"Switched to dataset {self.iterator_idx} with a micro-batch size {batch_size}. It has a length of {len(train_dataset)} and sequence length of {len(train_dataset[0]['input_ids'])}",
+            f"Switched to dataset {self.iterator_idx} with a micro-batch size {batch_size}. It has a length of {len(train_dataset)} and sequence length of {len(train_dataset[0]['input_ids'])} and a mask probability of {self.args.mlm_probabilities[self.iterator_idx]}",
             rank0_only=True,
         )
         dataloader = DataLoader(
             train_dataset,
             batch_size=batch_size,
+            collate_fn=collator,
             **common_args,
         )
         return dataloader
@@ -147,7 +151,7 @@ class LMDataModule(L.LightningDataModule):
             return DataLoader(
                 self.val_dataset,
                 **common_args,
-                batch_size=self.args.eval_micro_batch_size[-1],
+                batch_size=self.args.eval_micro_batch_sizes[-1],
             )
 
         dataloaders = []
@@ -156,9 +160,9 @@ class LMDataModule(L.LightningDataModule):
                 DataLoader(
                     self.val_datasets[i],
                     **common_args,
-                    batch_size=self.args.eval_micro_batch_size[i]
+                    batch_size=self.args.eval_micro_batch_sizes[i]
                     if self.use_n_train_datasets > 1
-                    else self.args.eval_micro_batch_size[-1],
+                    else self.args.eval_micro_batch_sizes[-1],
                 )
             )
         return dataloaders

@@ -6,8 +6,10 @@ from transformers.models.auto.modeling_auto import AutoModel
 from transformers.modeling_utils import PreTrainedModel
 import collections
 import torch
+from torch.utils.flop_counter import FlopCounterMode
+from print_on_steroids import logger
 
-from src.utils import configure_optimizer
+from src.utils import configure_optimizer, define_wandb_metrics
 
 
 class PretrainBERT(L.LightningModule):
@@ -24,7 +26,7 @@ class PretrainBERT(L.LightningModule):
         eval_interval: int,
         tokenizer_vocab_size: int,
         val_set_to_seq_len: dict,
-        epsilon: float = 1e-8,
+        epsilon: float = 1e-6,
         save_hyperparameters: bool = True,
         use_n_val_datasets: int = 1,
     ) -> None:
@@ -62,8 +64,10 @@ class PretrainBERT(L.LightningModule):
         self.eval_interval = eval_interval
         self.epsilon = epsilon
         self.loss_function = nn.CrossEntropyLoss()
+
         self.start = torch.cuda.Event(enable_timing=True)
         self.end = torch.cuda.Event(enable_timing=True)
+        self.total_flops = 0
 
         if val_set_to_seq_len:
             self.val_dataloader_to_seq_len = val_set_to_seq_len
@@ -74,6 +78,9 @@ class PretrainBERT(L.LightningModule):
                 2: "val/loss_256",
                 3: "val/loss_512",
             }
+
+        # Define new wandb metrics. This is needed to be able to select the metrics in the W&B dashboard.
+        # define_wandb_metrics(list(self.val_dataloader_to_seq_len.values()) + ["tokens/sec"], fixed_metrics=["flops"])
 
     def forward(self, input_ids, attention_mask, labels, token_type_ids=None):
         last_hidden_states = self.model(input_ids, attention_mask, output_hidden_states=True)[0]
@@ -94,14 +101,27 @@ class PretrainBERT(L.LightningModule):
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
         loss = self(**batch)
-        self.log(
-            self.val_dataloader_to_seq_len[dataloader_idx],
-            loss,
-            on_step=False,
-            on_epoch=True,
-            sync_dist=True,
-            add_dataloader_idx=False,
-        )
+        # self.log(
+        #     self.val_dataloader_to_seq_len[dataloader_idx],
+        #     loss,
+        #     on_step=False,
+        #     on_epoch=True,
+        #     sync_dist=True,
+        #     add_dataloader_idx=False,
+        # )
+
+    def on_fit_start(self):
+        # We choose this implemation (taken from https://github.com/leonardhorns/rlp-usageinfo) over the ThroughputMonitor, since our micro batch size is not always constant
+        self.flop_counter = FlopCounterMode(self.model, display=False)
+        self.flop_counter.__enter__()
+        logger.info("Flop counter started (model fitting)")
+
+    def on_fit_end(self):
+        self.flop_counter.__exit__(None, None, None)
+        fit_flops = self.flop_counter.get_total_flops()
+        self.total_flops += fit_flops
+        self.log("flops", self.total_flops, on_step=False, on_epoch=False)
+        logger.info(f"Flop counter ended (model fitting). FLOPs: {fit_flops}")
 
     def configure_optimizers(self):
         return configure_optimizer(
@@ -130,7 +150,6 @@ class QABERT(L.LightningModule):
         warmup_period: int,
         eval_interval: int,
         num_labels: int,
-        finetune_last_layer: bool,
         epsilon: float = 1e-8,
         save_hyperparameters: bool = True,
     ) -> None:
@@ -149,7 +168,9 @@ class QABERT(L.LightningModule):
         self.warmup_period = warmup_period
         self.eval_interval = eval_interval
         self.epsilon = epsilon
-        self.finetune_last_layer = finetune_last_layer
+
+        # Define new wandb metrics. This is needed to be able to select the metrics in the W&B dashboard.
+        define_wandb_metrics(["val/f1", "val/exact_match", "val/loss"])
 
     def forward(self, input_ids, attention_mask, start_positions, end_positions, token_type_ids=None):
         output = self.model(input_ids, attention_mask)[0]
@@ -218,9 +239,7 @@ class QABERT(L.LightningModule):
         return predicted_answers
 
     def configure_optimizers(self):
-        trainable_parameters = list(self.head.qa.named_parameters())
-        if self.finetune_last_layer:
-            trainable_parameters += list(self.model.encoder.layer[-1].named_parameters())
+        trainable_parameters = list(self.model.named_parameters()) + list(self.head.named_parameters())
         return configure_optimizer(
             trainable_parameters,
             self.global_rank,
@@ -270,7 +289,6 @@ class SCBERT(L.LightningModule):
         eval_interval: int,
         num_labels: int,
         classifier_dropout: float,
-        finetune_last_layer: bool,
         epsilon: float = 1e-8,
         save_hyperparameters: bool = True,
     ) -> None:
@@ -288,9 +306,10 @@ class SCBERT(L.LightningModule):
         self.warmup_period = warmup_period
         self.eval_interval = eval_interval
         self.epsilon = epsilon
-        self.finetune_last_layer = finetune_last_layer
 
         self.metric = load("accuracy")
+        # Define new wandb metrics. This is needed to be able to select the metrics in the W&B dashboard.
+        define_wandb_metrics(["val/accuracy", "val/loss"])
 
     def forward(self, input_ids, attention_mask, labels, token_type_ids=None):
         last_hidden_state = self.model(input_ids, attention_mask)[0]
@@ -309,9 +328,8 @@ class SCBERT(L.LightningModule):
         self.log("val/accuracy", accuracy, on_step=False, on_epoch=True, sync_dist=True)
 
     def configure_optimizers(self):
-        trainable_parameters = list(self.head.cls.named_parameters())
-        if self.finetune_last_layer:
-            trainable_parameters += list(self.model.encoder.layer[-1].named_parameters())
+        # TODO: CHECK
+        trainable_parameters = list(self.model.named_parameters()) + list(self.head.named_parameters())
         return configure_optimizer(
             trainable_parameters,
             self.global_rank,

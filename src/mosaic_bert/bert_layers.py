@@ -71,7 +71,7 @@ try:
     logger.info("Using Flash Attention 2 for Mosaic BERT")
     IMPL_USE_FLASH2 = True
 except ImportError as e:
-    warnings.warn(f"Failed to import flash_attn. Will try to import triton implementation: {e}", stacklevel=2)
+    logger.warning(f"Failed to import flash_attn. Will try to import triton implementation: {e}")
     # Import custom Triton Flash Attention implementation that supports ALiBi
     try:
         import flash_attn_triton as flash_attn_triton
@@ -79,7 +79,7 @@ except ImportError as e:
         flash_attn_qkvpacked_func = flash_attn_triton.flash_attn_qkvpacked_func
     except ImportError as e:
         flash_attn_qkvpacked_func = None
-        warnings.warn(f"Failed to import flash_attn_triton as a fallback: {e}", stacklevel=2)
+        logger.warning(f"Failed to import flash_attn_triton as a fallback: {e}")
 
 logger = logging.getLogger(__name__)
 

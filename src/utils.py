@@ -50,6 +50,25 @@ def configure_optimizer(
     }
 
 
+def define_wandb_metrics(extra_metrics: list[str] = [], extra_step_metrics: list[str] = [], fixed_metrics: list[str] = []):
+    import wandb
+
+    default_metrics = ["train/loss"]
+    default_step_metrics = ["progress/tokens", "progress/samples", "progress/masked_tokens", "trainer/global_step"]
+
+    for metric in fixed_metrics:
+        wandb.define_metric(metric)
+
+    # First we need to define the step_metrics as metrics to use a step_metric
+    for metric in default_step_metrics + extra_step_metrics:
+        wandb.define_metric(metric)
+
+    # Then we define the metrics to be logged
+    for metric in default_metrics + extra_metrics:
+        for step_metric in default_step_metrics + extra_step_metrics:
+            wandb.define_metric(metric, step_metric=step_metric)
+
+
 ##############################
 # Template pre-defined utils #
 ##############################
@@ -63,7 +82,7 @@ def find_multiple(n: int, k: int) -> int:
     return n + k - (n % k)
 
 
-def wait_for_debugger(port: int = 56789):
+def wait_for_debugger(port: int = 56786):
     """
     Pauses the program until a remote debugger is attached. Should only be called on rank0.
     """

@@ -32,11 +32,14 @@ class TrainingArgs:
     val_files: str = field(default="dev.jsonl")
     "Name of the validation file."
 
-    dataset_yml: str | None = field(default=None)
-    "Path to a dataset yml file. This overrides the train_files and val_files, you only need to specify this."
+    dataset_yml: str = field(default="dataset_info.yml")
+    "Path to a dataset yml file. This overrides the train_files and val_files, you only need to specify this. Specify use_train_val_info to use the train and val files."
 
-    tokenizer_path: str | None = field(default="google-bert/bert-base-uncased")
+    tokenizer_path: str | None = field(default="tokenizer")
     "Path to a saved tokenizer to switch the vocabulary. If None, use the hf_model_name."
+
+    finetune_cfgs_after_training: str | None = field(default=None)
+    "Finetune the model on all three datasets after training. Split by comma."
 
     ###############################
     ##### Training constants ######
@@ -55,7 +58,7 @@ class TrainingArgs:
     save_interval: int | float = field(default=0.1)
     "Interval between model checkpoints. If < 1, use as percentage of training_goal."
 
-    warmup_period: float = field(default=0.005)
+    warmup_period: float = field(default=0.06)
     "Length of lr warmup. If < 1, use as percentage of training_goal."
 
     lr_decay_period: int = field(default=-1)
@@ -71,11 +74,11 @@ class TrainingArgs:
     batch_size: int = field(default=128, alias="-b")
     weight_decay: float = 0.1
     beta1: float = 0.9
-    beta2: float = 0.95
+    beta2: float = 0.98
     grad_clip: float = field(default=1.0)
     "If -1, disable."
 
-    lr_schedule: Literal["cosine", "linear", "constant", "cosine_with_restarts", "polynomial"] = field(default="cosine")
+    lr_schedule: Literal["cosine", "linear", "constant", "cosine_with_restarts", "polynomial"] = field(default="linear")
 
     #######################################
     ## Hardware acceleration & precision ##
@@ -90,16 +93,16 @@ class TrainingArgs:
         help="Distributed training strategy to use. If `auto`, will select automatically (no distributed strategy is used when using a single device).",
         aliases="--ds",
     )
-    micro_batch_size: list[int] = field(default=None, alias="--mb")
+    micro_batch_sizes: list[int] = field(default=None, alias="--mb")
     """If None, use batch_size // num_devices. This is the batch size per device, not the total batch size.
     You should tune this so that you do not get GPU RAM OOM errors. We automatically calculate the gradient accumulation steps to achieve your desired `batch_size`.
     For each dataset you can have one batch size. Specify them for the datasets in the order they are loaded."""
 
-    eval_micro_batch_size: list[int] = field(default=None)
-    "If 1 use micro_batch_size[-1] for evaluation. Else use eval_micro_batch_size * micro_batch_size."
+    eval_micro_batch_sizes: list[int] = field(default=None)
+    "If 1 use micro_batch_sizes[-1] for evaluation. Else use eval_micro_batch_sizes."
 
     gradient_accumulation_steps: int = field(default=-1)
-    "If -1, set automatically based on batch_size and micro_batch_size."
+    "If -1, set automatically based on batch_size and micro_batch_sizes."
 
     precision: Literal["32-true", "16-mixed", "bf16-mixed"] = "bf16-mixed"
     compile: bool = field(default=False)
@@ -159,9 +162,8 @@ class TrainingArgs:
 
     num_labels: int = field(default=2)
 
-    mlm_probability: float = field(default=0.15)
-
-    finetune_last_layer: bool = field(default=False)
+    mlm_probabilities: list[float] = list_field(default=[0.15])
+    "List of probabilities for masked language modeling. Specify as many as you have train datasets."
 
     steps_per_seq_length: float = field(default=-1)
     "If -1, do not limit the number of steps per sequence length. This is the hard limit for the number of steps per sequence length."
@@ -176,12 +178,12 @@ class TrainingArgs:
 
     def __post_init__(self):
         assert self.num_devices > 0
-        if self.micro_batch_size is None:
-            # NOTE: you need to make sure that micro_batch_size can fit into the GPU memory
-            self.micro_batch_size = self.batch_size // self.num_devices
+        if self.micro_batch_sizes is None:
+            # NOTE: you need to make sure that micro_batch_sizes can fit into the GPU memory
+            self.micro_batch_sizes = self.batch_size // self.num_devices
             assert self.batch_size % self.num_devices == 0
 
-        self.iter_batch_size = self.micro_batch_size[-1] * self.num_devices
+        self.iter_batch_size = self.micro_batch_sizes[-1] * self.num_devices
 
         if self.eval_interval < 1:
             self.eval_interval = int(self.eval_interval * self.training_goal)
@@ -194,11 +196,11 @@ class TrainingArgs:
         elif self.lr_decay_period < 1:
             self.lr_decay_period = int(self.lr_decay_period * self.training_goal)
 
-        assert self.batch_size % self.micro_batch_size[-1] == 0
+        assert self.batch_size % self.micro_batch_sizes[-1] == 0
         if self.gradient_accumulation_steps == -1:
             self.gradient_accumulation_steps = self.batch_size // self.iter_batch_size
         assert self.gradient_accumulation_steps > 0
-        assert self.batch_size == self.micro_batch_size[-1] * self.num_devices * self.gradient_accumulation_steps
+        assert self.batch_size == self.micro_batch_sizes[-1] * self.num_devices * self.gradient_accumulation_steps
 
         if self.tokenizer_path is None:
             self.tokenizer_path = self.hf_model_name
@@ -232,7 +234,13 @@ class TrainingArgs:
         self.use_n_train_datasets = len(self.train_files)
         self.use_n_val_datasets = len(self.val_files)
 
-        self.eval_micro_batch_size = self.eval_micro_batch_size if self.eval_micro_batch_size else self.micro_batch_size[-1]
+        self.finetune_cfgs_after_training = (
+            self.finetune_cfgs_after_training.split(",") if self.finetune_cfgs_after_training else False
+        )
+
+        self.eval_micro_batch_sizes = (
+            self.eval_micro_batch_sizes if self.eval_micro_batch_sizes else [self.micro_batch_sizes[-1]]
+        )
 
         if self.max_time == "00:00:00:00":
             self.max_time = None
