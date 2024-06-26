@@ -285,6 +285,8 @@ def _get_labels_for_qa(inputs, answers, ids, context):
         context_start = idx
         while sequence_ids[idx] == 1:
             idx += 1
+            if idx == len(sequence_ids):
+                break
         context_end = idx - 1
 
         # If the answer is not fully inside the context, label is (0, 0)

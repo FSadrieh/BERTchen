@@ -50,14 +50,11 @@ def configure_optimizer(
     }
 
 
-def define_wandb_metrics(extra_metrics: list[str] = [], extra_step_metrics: list[str] = [], fixed_metrics: list[str] = []):
+def define_wandb_metrics(extra_metrics: list[str] = [], extra_step_metrics: list[str] = []):
     import wandb
 
     default_metrics = ["train/loss"]
-    default_step_metrics = ["progress/tokens", "progress/samples", "progress/masked_tokens", "trainer/global_step"]
-
-    for metric in fixed_metrics:
-        wandb.define_metric(metric)
+    default_step_metrics = ["progress/tokens", "progress/samples", "trainer/global_step"]
 
     # First we need to define the step_metrics as metrics to use a step_metric
     for metric in default_step_metrics + extra_step_metrics:

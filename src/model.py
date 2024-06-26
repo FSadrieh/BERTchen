@@ -6,8 +6,10 @@ from transformers.models.auto.modeling_auto import AutoModel
 from transformers.modeling_utils import PreTrainedModel
 import collections
 import torch
-from torch.utils.flop_counter import FlopCounterMode
-from print_on_steroids import logger
+
+# from torch.utils.flop_counter import FlopCounterMode
+# from print_on_steroids import logger
+import datetime
 
 from src.utils import configure_optimizer, define_wandb_metrics
 
@@ -80,7 +82,7 @@ class PretrainBERT(L.LightningModule):
             }
 
         # Define new wandb metrics. This is needed to be able to select the metrics in the W&B dashboard.
-        # define_wandb_metrics(list(self.val_dataloader_to_seq_len.values()) + ["tokens/sec"], fixed_metrics=["flops"])
+        define_wandb_metrics(list(self.val_dataloader_to_seq_len.values()) + ["tokens/sec"], ["progress/masked_tokens"])
 
     def forward(self, input_ids, attention_mask, labels, token_type_ids=None):
         last_hidden_states = self.model(input_ids, attention_mask, output_hidden_states=True)[0]
@@ -101,27 +103,27 @@ class PretrainBERT(L.LightningModule):
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
         loss = self(**batch)
-        # self.log(
-        #     self.val_dataloader_to_seq_len[dataloader_idx],
-        #     loss,
-        #     on_step=False,
-        #     on_epoch=True,
-        #     sync_dist=True,
-        #     add_dataloader_idx=False,
-        # )
+        self.log(
+            self.val_dataloader_to_seq_len[dataloader_idx],
+            loss,
+            on_step=False,
+            on_epoch=True,
+            sync_dist=True,
+            add_dataloader_idx=False,
+        )
 
-    def on_fit_start(self):
-        # We choose this implemation (taken from https://github.com/leonardhorns/rlp-usageinfo) over the ThroughputMonitor, since our micro batch size is not always constant
-        self.flop_counter = FlopCounterMode(self.model, display=False)
-        self.flop_counter.__enter__()
-        logger.info("Flop counter started (model fitting)")
+    # def on_fit_start(self):
+    #     # We choose this implemation (taken from https://github.com/leonardhorns/rlp-usageinfo) over the ThroughputMonitor, since our micro batch size is not always constant
+    #     self.flop_counter = FlopCounterMode(self.model, display=False)
+    #     self.flop_counter.__enter__()
+    #     logger.info("Flop counter started (model fitting)")
 
-    def on_fit_end(self):
-        self.flop_counter.__exit__(None, None, None)
-        fit_flops = self.flop_counter.get_total_flops()
-        self.total_flops += fit_flops
-        self.log("flops", self.total_flops, on_step=False, on_epoch=False)
-        logger.info(f"Flop counter ended (model fitting). FLOPs: {fit_flops}")
+    # def on_fit_end(self):
+    #     self.flop_counter.__exit__(None, None, None)
+    #     fit_flops = self.flop_counter.get_total_flops()
+    #     self.total_flops += fit_flops
+    # self.log("flops", self.total_flops, on_step=False, on_epoch=False)
+    # logger.info(f"Flop counter ended (model fitting). FLOPs: {fit_flops}")
 
     def configure_optimizers(self):
         return configure_optimizer(
@@ -168,9 +170,6 @@ class QABERT(L.LightningModule):
         self.warmup_period = warmup_period
         self.eval_interval = eval_interval
         self.epsilon = epsilon
-
-        # Define new wandb metrics. This is needed to be able to select the metrics in the W&B dashboard.
-        define_wandb_metrics(["val/f1", "val/exact_match", "val/loss"])
 
     def forward(self, input_ids, attention_mask, start_positions, end_positions, token_type_ids=None):
         output = self.model(input_ids, attention_mask)[0]
@@ -307,9 +306,7 @@ class SCBERT(L.LightningModule):
         self.eval_interval = eval_interval
         self.epsilon = epsilon
 
-        self.metric = load("accuracy")
-        # Define new wandb metrics. This is needed to be able to select the metrics in the W&B dashboard.
-        define_wandb_metrics(["val/accuracy", "val/loss"])
+        self.metric = load("accuracy", experiment_id=datetime.datetime.now())
 
     def forward(self, input_ids, attention_mask, labels, token_type_ids=None):
         last_hidden_state = self.model(input_ids, attention_mask)[0]

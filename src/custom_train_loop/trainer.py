@@ -18,7 +18,7 @@ class CustomTrainer(Trainer):
         self.fit_loop.epoch_loop = CustomTrainingEpochLoop(
             self,
             min_steps=kwargs.get("min_steps", None),
-            max_steps=kwargs.get("max_steps", None),
+            max_steps=kwargs.get("max_steps", -1),
             monitor=monitor,
             min_delta=min_delta,
             patience=patience,

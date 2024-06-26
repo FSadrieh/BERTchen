@@ -93,26 +93,26 @@ class ProgressMetricCallback(Callback):
             on_epoch=False,
         )
 
-    # def on_validation_batch_end(
-    #     self,
-    #     trainer: Trainer,
-    #     pl_module: Any,
-    #     outputs: STEP_OUTPUT | None,
-    #     batch: Any,
-    #     batch_idx: int,
-    #     dataloader_idx: int = 0,
-    # ) -> None:
-    #     if dataloader_idx != 0:
-    #         return
-    #     self.log_dict(
-    #         {
-    #             "progress/samples": self.samples_processed,
-    #             "progress/tokens": self.tokens_processed,
-    #             "progress/masked_tokens": float(self.masked_tokens_processed),
-    #             "trainer/global_step": float(trainer.global_step),
-    #         },
-    #         rank_zero_only=True,
-    #         on_step=True,
-    #         on_epoch=False,
-    #         add_dataloader_idx=False,
-    #     )
+    def on_validation_batch_end(
+        self,
+        trainer: Trainer,
+        pl_module: Any,
+        outputs: STEP_OUTPUT | None,
+        batch: Any,
+        batch_idx: int,
+        dataloader_idx: int = 0,
+    ) -> None:
+        if dataloader_idx != 0:
+            return
+        self.log_dict(
+            {
+                "progress/samples": self.samples_processed,
+                "progress/tokens": self.tokens_processed,
+                "progress/masked_tokens": float(self.masked_tokens_processed),
+                "trainer/global_step": float(trainer.global_step),
+            },
+            rank_zero_only=True,
+            on_step=True,
+            on_epoch=False,
+            add_dataloader_idx=False,
+        )

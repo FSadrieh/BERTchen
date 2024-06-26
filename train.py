@@ -49,8 +49,7 @@ def main(is_sweep=None, config_path=None, update_args=None):
         num_available_gpus = torch.cuda.device_count()
         if num_available_gpus > args.num_devices:
             logger.warning(
-                f"Requested {args.num_devices} GPUs but {num_available_gpus} are available.",
-                f"Using first {args.num_devices} GPUs. You should set CUDA_VISIBLE_DEVICES or the docker --gpus flag to the desired GPU ids.",
+                f"Requested {args.num_devices} GPUs but {num_available_gpus} are available. Using first {args.num_devices} GPUs. You should set CUDA_VISIBLE_DEVICES or the docker --gpus flag to the desired GPU ids.",
             )
         if not torch.cuda.is_available():
             logger.error("CUDA is not available, you should change the accelerator with --accelerator cpu|tpu|mps.")
@@ -124,6 +123,7 @@ def main(is_sweep=None, config_path=None, update_args=None):
         lr_schedule=args.lr_schedule,
         warmup_period=args.warmup_period,
         eval_interval=args.eval_interval,
+        epsilon=args.epsilon,
     )
     if args.saved_checkpoint_path:
         args.saved_checkpoint_path = check_for_wandb_checkpoint_and_download_if_necessary(
@@ -205,9 +205,11 @@ def main(is_sweep=None, config_path=None, update_args=None):
         checkpoint_callback,
         wandb_disk_cleanup_callback,
         lr_monitor,
-        # ProgressMetricCallback(),
         early_stopping_callback,
     ]
+
+    if args.task == "pretraining":
+        callbacks.append(ProgressMetricCallback())
     if args.accelerator == "cuda":
         callbacks.append(CUDAMetricsCallback())
 
@@ -219,11 +221,7 @@ def main(is_sweep=None, config_path=None, update_args=None):
     # lightning wants val_check_interval in num forward passes (iters) not num optimization steps
     val_frequency_in_iters = args.eval_interval * args.gradient_accumulation_steps
 
-    # Initialize trainer
-    trainer = CustomTrainer(
-        max_steps=args.training_goal,
-        val_check_interval=val_frequency_in_iters,
-        check_val_every_n_epoch=None,  # validation based on steps instead of epochs
+    trainer_args = dict(
         devices=args.num_devices,
         accelerator=args.accelerator,
         strategy=args.distributed_strategy,
@@ -246,6 +244,20 @@ def main(is_sweep=None, config_path=None, update_args=None):
         mode="min",
         max_time=args.max_time,
     )
+
+    if args.base_unit == "epochs":
+        trainer = CustomTrainer(
+            max_epochs=args.training_goal,
+            check_val_every_n_epoch=1,
+            **trainer_args,
+        )
+    else:
+        trainer = CustomTrainer(
+            max_steps=args.training_goal,
+            check_val_every_n_epoch=None,  # validation based on steps instead of epochs
+            val_check_interval=val_frequency_in_iters,
+            **trainer_args,
+        )
 
     if current_process_rank == 0:
         logger.info(

@@ -45,12 +45,12 @@ class TrainingArgs:
     ##### Training constants ######
     ###############################
 
-    base_unit: Literal["samples", "tokens", "optimizer-steps", "iters"] = field(default="optimizer-steps")
+    base_unit: Literal["samples", "tokens", "optimizer-steps", "iters", "epochs"] = field(default="optimizer-steps")
     "Unit of all training constants. They will be converted to optimizer_steps in __post_init__."
 
     training_goal: int = field(default=50_000)
     eval_interval: float = field(default=0.1)
-    "Interval between evaluations. If < 1, use as percentage of training_goal."
+    "Interval between evaluations. If < 1, use as percentage of training_goal. If epoachs is set we evaluate after each epoch."
 
     eval_samples: int = field(default=-1)
     "Number of samples on the val dataset during evaluation. If -1, use full val dataset."
@@ -75,6 +75,7 @@ class TrainingArgs:
     weight_decay: float = 0.1
     beta1: float = 0.9
     beta2: float = 0.98
+    epsilon: float = 1e-6
     grad_clip: float = field(default=1.0)
     "If -1, disable."
 
@@ -216,14 +217,17 @@ class TrainingArgs:
             UNITS_PER_STEP = 1
         elif self.base_unit == "iters":
             UNITS_PER_STEP = self.gradient_accumulation_steps
+        elif self.base_unit == "epochs":
+            UNITS_PER_STEP = None
         else:
             raise ValueError(f"Unknown training goal unit: {self.base_unit}")
 
-        self.training_goal = int(self.training_goal / UNITS_PER_STEP)
-        self.eval_interval = int(self.eval_interval / UNITS_PER_STEP)
-        self.save_interval = int(self.save_interval / UNITS_PER_STEP)
-        self.warmup_period = int(self.warmup_period / UNITS_PER_STEP)
-        self.lr_decay_period = int(self.lr_decay_period / UNITS_PER_STEP)
+        if UNITS_PER_STEP is not None:
+            self.training_goal = int(self.training_goal / UNITS_PER_STEP)
+            self.eval_interval = int(self.eval_interval / UNITS_PER_STEP)
+            self.save_interval = int(self.save_interval / UNITS_PER_STEP)
+            self.warmup_period = int(self.warmup_period / UNITS_PER_STEP)
+            self.lr_decay_period = int(self.lr_decay_period / UNITS_PER_STEP)
 
         if self.preprocessing_workers == -1:
             # Set to all available CPUs, handle SLURM case when only some CPUs are available to the job
