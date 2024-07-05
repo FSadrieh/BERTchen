@@ -36,6 +36,7 @@ DATASET_TO_TASK = {
     "germanquad": "question-answering",
     "germeval_A": "sequence-classification",
     "germeval_B": "sequence-classification",
+    "germeval_24": "sequence-classification",
 }
 
 
@@ -43,7 +44,9 @@ DATASET_TO_TASK = {
 class Args:
     out_dir: str = field(alias="-o")
 
-    dataset: Literal["c4", "cc100", "CulturaX", "germanquad", "germeval_A", "germeval_B"] = field(default="CulturaX")
+    dataset: Literal[
+        "c4", "cc100", "CulturaX", "germanquad", "germeval_A", "germeval_B", "germeval_24", "wikipedia", "oscar2023"
+    ] = field(default="CulturaX")
     "HF dataset"
 
     max_train_size: int = field(default=-1)
@@ -147,6 +150,37 @@ def load_and_process_germaneval(
     return (train_dataset, dev_dataset)
 
 
+def load_and_process_germaneval_24(tmp_cache_dir: str, processes: int) -> datasets.Dataset:
+    SEXISM_LEVELS = {
+        "0-Kein": 0,
+        "1-Gering": 1,
+        "2-Vorhanden": 2,
+        "3-Stark": 3,
+        "4-Extrem": 4,
+    }
+
+    def _encode_sexism_level(annotations):
+        """Encodes the sexism level from the annotations as a majority vote. If there is no majority, we return the lowest level."""
+        votes = [SEXISM_LEVELS[annotation["label"]] for annotation in annotations]
+        return max(set(votes), key=votes.count)
+
+    # Downloading this dataset is different as it is not available on HF
+    if not (os.path.exists("data/dev_v1.4.tsv") and os.path.exists("data/train_v1.4.tsv")):
+        raise FileNotFoundError(
+            "Please download the competition phase training data of the GermEval dataset from https://ofai.github.io/GermEval2024-GerMS/download.html and place it in the data/ folder."
+        )
+    dataset = load_dataset(
+        "json",
+        data_files={"train": "data/germeval_24.jsonl"},
+        cache_dir=tmp_cache_dir,
+        num_proc=processes,
+    )["train"]
+
+    dataset = dataset.map(lambda x: {"label": _encode_sexism_level(x["annotations"])})
+
+    return dataset
+
+
 def load_right_dataset(
     dataset_name: str, tmp_cache_dir: str, data_location: str, split: str, processes: int
 ) -> tuple[datasets.Dataset, datasets.Dataset]:
@@ -184,12 +218,40 @@ def load_right_dataset(
         dataset = _load_dataset(default_loading_args, _file_location("cc100"), "cc100", extra_loading_args)
         return (dataset, None)
 
+    if dataset_name == "wikipedia":
+        extra_loading_args = {"name": "20220301.de"}
+        dataset = _load_dataset(default_loading_args, _file_location("wikipedia"), "wikipedia", extra_loading_args)
+        return (dataset, None)
+
+    if dataset_name == "oscar2023":
+        extra_loading_args = {"language": "de"}
+        dataset = _load_dataset(
+            default_loading_args, _file_location("oscar2023"), "oscar-corpus/OSCAR-2301", extra_loading_args, token=True
+        )
+
+        dataset = dataset.filter(
+            lambda x: x["meta"]["quality_warnings"] is None
+            or (
+                "noisy" not in x["meta"]["quality_warnings"]
+                and "header" not in x["meta"]["quality_warnings"]
+                and "footer" not in x["meta"]["quality_warnings"]
+                and "short_sentences" not in x["meta"]["quality_warnings"]
+                and "tiny" not in x["meta"]["quality_warnings"]
+                and "adult" not in x["meta"]["quality_warnings"]
+            ),
+        )
+        return (dataset, None)
+
     if dataset_name == "germanquad":
         dataset = _load_dataset(default_loading_args, _file_location("germanquad"), "deepset/germanquad")
         return (dataset, None)
 
     if dataset_name in ["germeval_A", "germeval_B"]:
         return load_and_process_germaneval(tmp_cache_dir, dataset_name, processes)
+
+    if dataset_name == "germeval_24":
+        dataset = load_and_process_germaneval_24(tmp_cache_dir, processes)
+        return (dataset, None)
 
 
 def group_lines(processes: int, dataset: datasets.Dataset):

@@ -36,7 +36,7 @@ class LMDataModule(L.LightningDataModule):
         self.iterator_idx = 0
         self.use_n_train_datasets = self.args.use_n_train_datasets
         self.use_n_val_datasets = self.args.use_n_val_datasets
-        self.data_collator = None
+        self.train_dataset = None
 
     def prepare_data(self) -> None:
         for file in self.train_files + self.val_files:
@@ -44,6 +44,8 @@ class LMDataModule(L.LightningDataModule):
                 logger.info(f"Could not find processed dataset: {file}, please create it via data download")
 
     def setup(self, stage):
+        if self.train_dataset is not None:
+            return
         logger.info(f"Loading cached processed dataset from {self.data_dir}...", rank0_only=False)
 
         self.train_datasets = []
@@ -126,7 +128,7 @@ class LMDataModule(L.LightningDataModule):
         batch_size = self.args.micro_batch_sizes[self.iterator_idx]
         self.iterator_idx += 1
         logger.info(
-            f"Switched to dataset {self.iterator_idx} with a micro-batch size {batch_size}. It has a length of {len(train_dataset)} and sequence length of {len(train_dataset[0]['input_ids'])} and a mask probability of {self.args.mlm_probabilities[self.iterator_idx]}",
+            f"Switched to dataset {self.iterator_idx} with a micro-batch size {batch_size}. It has a length of {len(train_dataset)} and sequence length of {len(train_dataset[0]['input_ids'])} and a mask probability of {self.args.mlm_probabilities[self.iterator_idx - 1]}",
             rank0_only=True,
         )
         dataloader = DataLoader(

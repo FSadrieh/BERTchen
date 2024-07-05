@@ -18,7 +18,7 @@ def check_for_wandb_checkpoint_and_download_if_necessary(
     wandb_project=None,
     suffix="/model.ckpt",
 ) -> str:
-    from train import WANDB_ENTITY, WANDB_PROJECT
+    from train_interface import WANDB_ENTITY, WANDB_PROJECT
 
     """
     Checks the provided checkpoint_path for the wandb regex r\"wandb:.*\".

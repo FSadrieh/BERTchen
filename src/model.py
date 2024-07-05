@@ -161,7 +161,7 @@ class QABERT(L.LightningModule):
 
         self.model = model
         self.head = QuestionAnsweringHead(model.config.hidden_size, num_labels)
-        self.metric = load("squad")
+        self.metric = load("squad", experiment_id=datetime.datetime.now())
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.beta1 = beta1
@@ -177,19 +177,19 @@ class QABERT(L.LightningModule):
 
     def training_step(self, batch, batch_idx):
         loss = self(**batch["input"])[0]
-        self.log("train/loss", loss, on_step=True, on_epoch=False)
+        self.log("train/QA_loss", loss, on_step=True, on_epoch=False)
         return loss
 
     def validation_step(self, batch, batch_idx):
         loss, start_logits, end_logits = self(**batch["input"])
-        self.log("val/loss", loss, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/QA_loss", loss, on_step=False, on_epoch=True, sync_dist=True)
         # We want to restore the predictions to the original format {'prediction_text': , 'id': }
         prediction = self.compute_prediction(start_logits, end_logits, batch["ids"], batch["context"], batch["offset_mapping"])
         # The answer has the format {'answers': {'answer_start': , 'text': }, 'id': }
         answers = batch["answers"]
         results = self.metric.compute(predictions=prediction, references=answers)
-        self.log("val/f1", results["f1"], on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/exact_match", results["exact_match"], on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/QA_f1", results["f1"], on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/QA_exact_match", results["exact_match"], on_step=False, on_epoch=True, sync_dist=True)
 
     def compute_prediction(self, start_logits, end_logits, ids, contexts, offset_mapping, n_best=20, max_answer_length=30):
         # The code is adapted from the huggingface guide to QA https://huggingface.co/learn/nlp-course/chapter7/7
@@ -288,6 +288,7 @@ class SCBERT(L.LightningModule):
         eval_interval: int,
         num_labels: int,
         classifier_dropout: float,
+        metric_name: str,
         epsilon: float = 1e-8,
         save_hyperparameters: bool = True,
     ) -> None:
@@ -305,6 +306,7 @@ class SCBERT(L.LightningModule):
         self.warmup_period = warmup_period
         self.eval_interval = eval_interval
         self.epsilon = epsilon
+        self.metric_name = metric_name
 
         self.metric = load("accuracy", experiment_id=datetime.datetime.now())
 
@@ -313,19 +315,18 @@ class SCBERT(L.LightningModule):
         return self.head(last_hidden_state, labels, attention_mask)
 
     def training_step(self, batch, batch_idx):
-        loss, logits = self(**batch)
-        self.log("train/loss", loss, on_step=True, on_epoch=False)
+        loss, __ = self(**batch)
+        self.log(f"train/{self.metric_name}_loss", loss, on_step=True, on_epoch=False)
         return loss
 
     def validation_step(self, batch, batch_idx):
         loss, logits = self(**batch)
-        self.log("val/loss", loss, on_step=False, on_epoch=True, sync_dist=True)
+        self.log(f"val/{self.metric_name}_loss", loss, on_step=False, on_epoch=True, sync_dist=True)
         predictions = torch.argmax(logits, axis=1)
         accuracy = self.metric.compute(predictions=predictions, references=batch["labels"])["accuracy"]
-        self.log("val/accuracy", accuracy, on_step=False, on_epoch=True, sync_dist=True)
+        self.log(f"val/{self.metric_name}_accuracy", accuracy, on_step=False, on_epoch=True, sync_dist=True)
 
     def configure_optimizers(self):
-        # TODO: CHECK
         trainable_parameters = list(self.model.named_parameters()) + list(self.head.named_parameters())
         return configure_optimizer(
             trainable_parameters,

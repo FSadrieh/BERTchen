@@ -41,6 +41,15 @@ class TrainingArgs:
     finetune_cfgs_after_training: str | None = field(default=None)
     "Finetune the model on all three datasets after training. Split by comma."
 
+    save_dir: str = field(default="/hpi/fs00/share/fg-demelo/efficient-bert-pretraining/logs/")
+    "Directory to save the model checkpoints."
+
+    repo_id: str = field(default=None)
+    "If specified we do not train the model, but just load the checkpoint (saved_checkpoint_path needs to be set) and upload the model to the hub. This is the ID of the repository to upload the model to"
+
+    private: bool = field(default=False)
+    "Whether to make the model private or public. Only used if repo_id is specified."
+
     ###############################
     ##### Training constants ######
     ###############################
@@ -151,7 +160,7 @@ class TrainingArgs:
     early_stopping_patience: int = field(default=5)
     "Early stopping patience."
 
-    early_stopping_delta: float = field(default="0.01")
+    early_stopping_delta: float = field(default=0.01)
 
     ###############################################
     ###### Efficient Bert Pretraining Params ######
@@ -177,6 +186,8 @@ class TrainingArgs:
 
     dataset_switching_delta: float = field(default=0.1)
 
+    metric_name_for_sc: Literal["germeval_B", "germeval_24"] = field(default="germeval_24")
+
     def __post_init__(self):
         assert self.num_devices > 0
         if self.micro_batch_sizes is None:
@@ -186,16 +197,17 @@ class TrainingArgs:
 
         self.iter_batch_size = self.micro_batch_sizes[-1] * self.num_devices
 
-        if self.eval_interval < 1:
-            self.eval_interval = int(self.eval_interval * self.training_goal)
-        if self.save_interval < 1:
-            self.save_interval = int(self.save_interval * self.training_goal)
-        if self.warmup_period < 1:
-            self.warmup_period = int(self.warmup_period * self.training_goal)
-        if self.lr_decay_period == -1:
-            self.lr_decay_period = self.training_goal
-        elif self.lr_decay_period < 1:
-            self.lr_decay_period = int(self.lr_decay_period * self.training_goal)
+        if self.base_unit != "epochs":
+            if self.eval_interval < 1:
+                self.eval_interval = int(self.eval_interval * self.training_goal)
+            if self.save_interval < 1:
+                self.save_interval = int(self.save_interval * self.training_goal)
+            if self.warmup_period < 1:
+                self.warmup_period = int(self.warmup_period * self.training_goal)
+            if self.lr_decay_period == -1:
+                self.lr_decay_period = self.training_goal
+            elif self.lr_decay_period < 1:
+                self.lr_decay_period = int(self.lr_decay_period * self.training_goal)
 
         assert self.batch_size % self.micro_batch_sizes[-1] == 0
         if self.gradient_accumulation_steps == -1:
@@ -217,12 +229,13 @@ class TrainingArgs:
             UNITS_PER_STEP = 1
         elif self.base_unit == "iters":
             UNITS_PER_STEP = self.gradient_accumulation_steps
+        # We treat epochs in the backend as optimizer steps by calculating how many steps are in an epoch in the trainer
         elif self.base_unit == "epochs":
             UNITS_PER_STEP = None
         else:
             raise ValueError(f"Unknown training goal unit: {self.base_unit}")
 
-        if UNITS_PER_STEP is not None:
+        if UNITS_PER_STEP:
             self.training_goal = int(self.training_goal / UNITS_PER_STEP)
             self.eval_interval = int(self.eval_interval / UNITS_PER_STEP)
             self.save_interval = int(self.save_interval / UNITS_PER_STEP)
@@ -239,7 +252,7 @@ class TrainingArgs:
         self.use_n_val_datasets = len(self.val_files)
 
         self.finetune_cfgs_after_training = (
-            self.finetune_cfgs_after_training.split(",") if self.finetune_cfgs_after_training else False
+            self.finetune_cfgs_after_training.split(",") if self.finetune_cfgs_after_training else None
         )
 
         self.eval_micro_batch_sizes = (
@@ -248,3 +261,19 @@ class TrainingArgs:
 
         if self.max_time == "00:00:00:00":
             self.max_time = None
+
+        self.learning_rate = float(self.learning_rate)
+        self.batch_size = int(self.batch_size)
+        self.weight_decay = float(self.weight_decay)
+        self.beta1 = float(self.beta1)
+        self.beta2 = float(self.beta2)
+        self.epsilon = float(self.epsilon)
+        self.early_stopping_delta = float(self.early_stopping_delta)
+
+        if self.repo_id:
+            assert self.saved_checkpoint_path is not None, "You need to specify a saved checkpoint to upload a model."
+
+    def update_from_dict(self, values_dict):
+        # Update class variables with values from the dictionary
+        for key, value in values_dict.items():
+            setattr(self, key, value)

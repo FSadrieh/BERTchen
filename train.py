@@ -1,88 +1,29 @@
-import dataclasses
-import os
 from pathlib import Path
 
 import torch
 import wandb
-from lightning import seed_everything
+from lightning import Trainer
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint, EarlyStopping
-from lightning.pytorch.loggers.wandb import WandbLogger
-from lightning.pytorch.plugins.environments import LightningEnvironment, SLURMEnvironment
-from print_on_steroids import graceful_exceptions, logger
-from simple_parsing import parse, parse_known_args
+from lightning.pytorch.plugins.environments import LightningEnvironment
+from print_on_steroids import logger
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 import yaml
+import math
+from src.custom_wandb_logger import CustomWandbLogger
 
 from args import TrainingArgs
-from dlib import CUDAMetricsCallback, WandbCleanupDiskAndCloudSpaceCallback, get_rank, log_slurm_info
-from src.utils import wait_for_debugger
+from dlib import CUDAMetricsCallback, WandbCleanupDiskAndCloudSpaceCallback, get_rank
+
 from src.data_loading import LMDataModule
-from src.helpers import (
-    ProgressMetricCallback,
-    check_checkpoint_path_for_wandb,
-    check_for_wandb_checkpoint_and_download_if_necessary,
-)
+from src.helpers import ProgressMetricCallback, check_for_wandb_checkpoint_and_download_if_necessary
 from src.model import PretrainBERT, QABERT, SCBERT
 from src.custom_train_loop.trainer import CustomTrainer
 
-WANDB_PROJECT = "bert-pretraining"
-WANDB_ENTITY = "raphael-team"
 
-
-def main(is_sweep=None, config_path=None, update_args=None):
+def train(args: TrainingArgs, wandb_logger: CustomWandbLogger, IS_ON_SLURM: bool = False):
     ########### CUDA checks ###########
     current_process_rank = get_rank()
-    # For sweeps we get the params from the sweep config
-    if is_sweep:
-        wandb.init()
-        args, __ = parse_known_args(TrainingArgs, config_path=config_path)
-        args.update_from_dict(wandb.config)
-    # If we want to finetune after training, we get the params from the config file
-    elif config_path:
-        args = parse(TrainingArgs, config_path=config_path)
-    else:
-        args = parse(TrainingArgs, add_config_path_arg=True)
-    if update_args:
-        args.update_from_dict(update_args)
     logger.config(rank=current_process_rank, print_rank0_only=True)
-    if args.accelerator == "cuda":
-        num_available_gpus = torch.cuda.device_count()
-        if num_available_gpus > args.num_devices:
-            logger.warning(
-                f"Requested {args.num_devices} GPUs but {num_available_gpus} are available. Using first {args.num_devices} GPUs. You should set CUDA_VISIBLE_DEVICES or the docker --gpus flag to the desired GPU ids.",
-            )
-        if not torch.cuda.is_available():
-            logger.error("CUDA is not available, you should change the accelerator with --accelerator cpu|tpu|mps.")
-            exit(1)
-    if current_process_rank == 0 and args.debug:
-        wait_for_debugger()
-    args.seed = seed_everything(workers=True, seed=args.seed)
-
-    ############# Construct W&B Logger ##############
-    if args.offline or args.fast_dev_run:
-        os.environ["WANDB_MODE"] = "dryrun"
-    wandb_extra_args = dict(name=args.run_name)
-    if args.saved_checkpoint_path and args.resume and check_checkpoint_path_for_wandb(args.saved_checkpoint_path):
-        logger.info("Resuming training from W&B")
-        wandb_extra_args = dict(id=check_checkpoint_path_for_wandb(args.saved_checkpoint_path), resume="must")  # resume W&B run
-    wandb_logger = WandbLogger(
-        project=WANDB_PROJECT,
-        entity=WANDB_ENTITY,
-        log_model=True,
-        tags=args.wandb_tags,
-        save_dir="logs/",
-        **wandb_extra_args,
-    )
-    wandb_logger.log_hyperparams(dataclasses.asdict(args))
-
-    if current_process_rank == 0:
-        logger.info(args)
-    if current_process_rank == 0 and not args.resume and not args.offline:
-        if args.run_name is None:
-            logger.warning("No run name specified with `--run_name`. Using W&B default (randomly generated name).")
-    IS_ON_SLURM = SLURMEnvironment.detect()
-    if IS_ON_SLURM and current_process_rank == 0:
-        log_slurm_info()
 
     # Specify the train and val files
     if args.dataset_yml != "use_train_val_info":
@@ -114,6 +55,23 @@ def main(is_sweep=None, config_path=None, update_args=None):
     ################# Construct model ##############
 
     tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(args.tokenizer_path or args.hf_model_name, use_fast=True)
+    tokenizer.deprecation_warnings["Asking-to-pad-a-fast-tokenizer"] = True
+
+    dm = LMDataModule(training_args=args, tokenizer=tokenizer, train_files=train_files, val_files=val_files)
+    if args.base_unit == "epochs":
+        dm.setup(None)
+        steps_per_epoch = math.ceil(len(dm.train_dataset) / args.batch_size)
+
+        max_steps = args.training_goal * steps_per_epoch
+        eval_interval = steps_per_epoch
+        save_interval = steps_per_epoch
+        warmup_period = int(args.warmup_period * max_steps)
+    else:
+        max_steps = args.training_goal
+        eval_interval = args.eval_interval
+        save_interval = args.save_interval
+        warmup_period = args.warmup_period
+
     # Resume from checkpoint if specified
     model_args = dict(
         learning_rate=args.learning_rate,
@@ -121,7 +79,7 @@ def main(is_sweep=None, config_path=None, update_args=None):
         beta1=args.beta1,
         beta2=args.beta2,
         lr_schedule=args.lr_schedule,
-        warmup_period=args.warmup_period,
+        warmup_period=warmup_period,
         eval_interval=args.eval_interval,
         epsilon=args.epsilon,
     )
@@ -166,6 +124,7 @@ def main(is_sweep=None, config_path=None, update_args=None):
             **model_args,
             num_labels=args.num_labels,
             classifier_dropout=args.classifier_dropout,
+            metric_name=args.metric_name_for_sc,
         )
 
     if not args.resume:
@@ -186,30 +145,38 @@ def main(is_sweep=None, config_path=None, update_args=None):
             )
         model = torch.compile(model)
 
-    #################### Construct dataloaders & trainer #################
-    dm = LMDataModule(training_args=args, tokenizer=tokenizer, train_files=train_files, val_files=val_files)
+    #################### Upload model if specified #################
+
+    if args.repo_id:
+        logger.info("Uploading model to Hugging Face Model Hub...")
+        model.model.push_to_hub(repo_id=args.repo_id, private=args.private, token=True, safe_serialization=True)
+        logger.success("Model uploaded successfully! Will not train.")
+        exit(0)
+
+    #################### Construct trainer #################
+
     lr_monitor = LearningRateMonitor(logging_interval="step")
     wandb_disk_cleanup_callback = WandbCleanupDiskAndCloudSpaceCallback(cleanup_local=True, cleanup_online=False, size_limit=20)
     checkpoint_callback = ModelCheckpoint(
-        dirpath=f"logs/bert-pretraining/{args.run_name}/checkpoints/",
+        dirpath=f"{args.save_dir}bert-pretraining/{args.run_name}/checkpoints/",
         filename="snap-{step}-samples-{progress/samples}-{progress/tokens}-loss-{val/loss:.2f}",
         monitor=monitor_loss,
         mode="min",
         auto_insert_metric_name=False,
-        every_n_train_steps=int(args.save_interval),
+        every_n_train_steps=int(save_interval),
     )
     early_stopping_callback = EarlyStopping(
         monitor=monitor_loss, min_delta=args.early_stopping_delta, patience=args.early_stopping_patience
     )
     callbacks = [
-        checkpoint_callback,
         wandb_disk_cleanup_callback,
         lr_monitor,
-        early_stopping_callback,
     ]
 
     if args.task == "pretraining":
         callbacks.append(ProgressMetricCallback())
+        callbacks.append(checkpoint_callback)
+        callbacks.append(early_stopping_callback)
     if args.accelerator == "cuda":
         callbacks.append(CUDAMetricsCallback())
 
@@ -219,9 +186,9 @@ def main(is_sweep=None, config_path=None, update_args=None):
         plugins = [LightningEnvironment()]
 
     # lightning wants val_check_interval in num forward passes (iters) not num optimization steps
-    val_frequency_in_iters = args.eval_interval * args.gradient_accumulation_steps
+    val_frequency_in_iters = eval_interval * args.gradient_accumulation_steps
 
-    trainer_args = dict(
+    trainer_dict = dict(
         devices=args.num_devices,
         accelerator=args.accelerator,
         strategy=args.distributed_strategy,
@@ -237,34 +204,31 @@ def main(is_sweep=None, config_path=None, update_args=None):
         inference_mode=not args.compile,  # inference_mode for val/test and PyTorch 2.0 compiler don't like each other
         limit_train_batches=None if args.steps_per_seq_length == -1 else args.steps_per_seq_length,
         reload_dataloaders_every_n_epochs=args.reload_dataloaders_every_n_epochs,
-        monitor=monitor_loss,
-        min_delta=args.dataset_switching_delta,
-        patience=args.dataset_switching_patience,
-        num_datasets=args.use_n_train_datasets,
-        mode="min",
         max_time=args.max_time,
+        max_steps=max_steps,
+        check_val_every_n_epoch=None,  # validation based on steps instead of epochs
+        val_check_interval=val_frequency_in_iters,
     )
 
-    if args.base_unit == "epochs":
-        trainer = CustomTrainer(
-            max_epochs=args.training_goal,
-            check_val_every_n_epoch=1,
-            **trainer_args,
+    # We only want dataset switching for pretraining
+    if args.task == "pretraining":
+        pretraining_args = dict(
+            monitor=monitor_loss,
+            min_delta=args.dataset_switching_delta,
+            patience=args.dataset_switching_patience,
+            num_datasets=args.use_n_train_datasets,
+            mode="min",
         )
+        trainer = CustomTrainer(**trainer_dict, **pretraining_args)
     else:
-        trainer = CustomTrainer(
-            max_steps=args.training_goal,
-            check_val_every_n_epoch=None,  # validation based on steps instead of epochs
-            val_check_interval=val_frequency_in_iters,
-            **trainer_args,
-        )
+        trainer = Trainer(**trainer_dict)
 
     if current_process_rank == 0:
         logger.info(
             f"Total optimizer steps: {args.training_goal} | "
-            f"LR warmup steps: {args.warmup_period} | "
+            f"LR warmup steps: {warmup_period} | "
             f"Validation Frequency: {args.eval_interval} | "
-            f"Model Log Frequency: {args.save_interval} | "
+            f"Model Log Frequency: {save_interval} | "
             f"Effective batch size: {args.batch_size} | "
             f"Micro batch size (per device and forward pass): {args.eval_micro_batch_sizes[-1]} | "
             f"Gradient accumulation steps: {args.gradient_accumulation_steps} | "
@@ -290,7 +254,7 @@ def main(is_sweep=None, config_path=None, update_args=None):
             logger.warning("Detected keyboard interrupt, trying to save latest checkpoint...")
         else:
             logger.success("Fit complete, starting validation...")
-            trainer.validate(model, dm)
+            val_results = trainer.validate(model, dm)
 
         if current_process_rank == 0:
             logger.info("Trying to save checkpoint....")
@@ -308,22 +272,4 @@ def main(is_sweep=None, config_path=None, update_args=None):
 
             logger.success("Saving finished!")
 
-        return args.finetune_cfgs_after_training, args.run_name
-
-
-if __name__ == "__main__":
-    current_process_rank = get_rank()
-    with graceful_exceptions(extra_message=f"Rank: {current_process_rank}"):
-        finetune_cfgs_after_training, run_name = main()
-        if finetune_cfgs_after_training:
-            logger.success("Training finished successfully! Now finetuning")
-            model_checkpoint_path = f"logs/bert-pretraining/{run_name}/checkpoints/last_model_ckpt.ckpt"
-            for cfg in finetune_cfgs_after_training:
-                main(
-                    is_sweep=False,
-                    config_path=cfg,
-                    update_args={
-                        "model_checkpoint_path": model_checkpoint_path,
-                        "run_name": run_name + cfg.split("/")[-1].split(".")[0],
-                    },
-                )
+        return val_results

@@ -5,8 +5,8 @@ import sys
 from os import path
 
 sys.path.append(path.dirname(path.dirname(path.abspath(__file__))))
-import train  # noqa: E402
-from cfgs.sweep_cfgs import sweep_cfgs  # noqa: E402
+from train_interface import sweep, WANDB_ENTITY, WANDB_PROJECT  # noqa: E402
+from cfgs.sweep_cfgs import sweep_cfgs  # type: ignore # noqa: E402
 
 
 def arg_parser():
@@ -22,8 +22,8 @@ def main():
     Performs a wandb sweep from the sweep_cfgs.py file.
     """
     args = arg_parser()
-    sweep_id = wandb.sweep(sweep_cfgs[args.name], project=train.WANDB_PROJECT, entity=train.WANDB_ENTITY)
-    wandb.agent(sweep_id, function=lambda: train.main(is_sweep=True, config_path=args.config), count=args.count)
+    sweep_id = wandb.sweep(sweep_cfgs[args.name], project=WANDB_PROJECT, entity=WANDB_ENTITY)
+    wandb.agent(sweep_id, function=lambda: sweep(config_path=args.config), count=args.count)
 
 
 if __name__ == "__main__":
