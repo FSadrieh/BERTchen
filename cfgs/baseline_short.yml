@@ -1,0 +1,24 @@
+# Normal pre-training args
+seed: 42
+from_scratch: True
+eval_interval: 0.04 # We want evaluate all 100 steps, therefore 2_500 * x = 100
+task: pretraining
+hf_model_name: mosaicml/mosaic-bert-base
+max_time: 00:04:00:00
+finetune_cfgs_after_training: cfgs/germeval_B.yml,cfgs/germeval_24.yml,cfgs/germanquad.yml
+
+# MosaicBERT hyp
+lr_schedule: linear
+warmup_period: 0.06
+weight_decay: 1.0e-5
+learning_rate: 5.0e-4
+training_goal: 2_500
+
+# Tune per run
+mlm_probabilities: [0.3]
+
+batch_size: 4096 # We tune the batch size in the same way as the micro_bs per run. 4096 was the original bs for 128 seq len
+micro_batch_sizes: [256]
+eval_micro_batch_sizes: [1024, 512, 256, 128]
+data_dir: /hpi/fs00/share/fg-demelo/efficient-bert-pretraining/data/c4_1.25_percent/c4_baseline_128
+run_name: c4_baseline_128
