@@ -9,45 +9,52 @@ import os
 from fnmatch import fnmatch
 from tqdm import tqdm
 
-import datasets
 import jsonlines
 from datasets import load_dataset
 from print_on_steroids import logger
 from simple_parsing import field, parse
 
-
 @dataclass
 class Args:
     out_dir: str = field(alias="-o")
 
-    wiki_path: str = field(alias="-w")
-
     books_dir: str = field(alias="-b")
+
+    wiki_path: str = field(alias="-w", default=None)
+
+    only_books: bool = field(alias="-ob", default=False)
 
 
 def main():
     args = parse(Args)
-
-    wiki_dataset = load_dataset("json", data_files=args.wiki_path)
-    logger.info(f"Loaded wiki dataset with {len(wiki_dataset['train'])} examples")
+    if not args.only_books:
+        wiki_dataset = load_dataset("json", data_files=args.wiki_path)
+        logger.info(f"Loaded wiki dataset with {len(wiki_dataset['train'])} examples")
 
     books_dataset = []
     for path, subdirs, files in os.walk(args.books_dir):
         for name in tqdm(files):
             if fnmatch(name, "*txt"):
                 with open(os.path.join(path, name), "r") as f:
-                    books_dataset.extend(f.read())
+                    book = f.read()
+                    book = book.replace("\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n", "")
+                    books_dataset.append(book)
+
+    logger.info(f"Loaded book dataset with {len(books_dataset)} examples")
+
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    with jsonlines.open(out_dir / "merged.jsonl", "w") as writer:
-        writer.write({"text": books_dataset})
+    with jsonlines.open(out_dir / "train.jsonl", "w") as writer:
+        for book in books_dataset:
+            writer.write({"text": book})
 
-        for wiki in wiki_dataset["train"]:
-            writer.write({"text": wiki["text"]})
+        if not args.only_books:
+            for wiki in wiki_dataset["train"]:
+                writer.write({"text": wiki["text"]})
 
-    logger.info(f"Saved merged dataset to {out_dir / 'merged.jsonl'}")
+    logger.info(f"Saved merged dataset to {out_dir / 'train.jsonl'}")
 
 
 if __name__ == "__main__":

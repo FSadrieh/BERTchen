@@ -37,6 +37,8 @@ DATASET_TO_TASK = {
     "germeval_A": "sequence-classification",
     "germeval_B": "sequence-classification",
     "germeval_24": "sequence-classification",
+    "wikipedia": "pre-training",
+    "oscar2023": "pre-training",
 }
 
 
@@ -95,8 +97,14 @@ class Args:
     dataset_size_splits: str = field(default=None)
     "If set it will determine, the sizes of the different train datasets. Format: 0.5,0.25,0.25 (For len(train_sequence_lengths) = 3)"
 
-    strategy: Literal["naive", "sorted"] = field(default="naive")
+    strategy: Literal["naive", "sorted", "not_packed"] = field(default="naive")
     "Strategy to split the dataset into different training datasets. Only used if task is pre-training and we have more than one datasets."
+
+    get_stats: bool = field(default=False)
+    "Will load the dataset and print some statistics about it."
+
+    truncate: bool = field(default=True)
+    "Truncate sequences to max_seq_length. Only for fine-tuning."
 
 
 def load_and_process_germaneval(
@@ -150,7 +158,7 @@ def load_and_process_germaneval(
     return (train_dataset, dev_dataset)
 
 
-def load_and_process_germaneval_24(tmp_cache_dir: str, processes: int) -> datasets.Dataset:
+def load_and_process_germeval_24(tmp_cache_dir: str, processes: int) -> datasets.Dataset:
     SEXISM_LEVELS = {
         "0-Kein": 0,
         "1-Gering": 1,
@@ -218,7 +226,7 @@ def load_right_dataset(
         dataset = _load_dataset(default_loading_args, _file_location("cc100"), "cc100", extra_loading_args)
         return (dataset, None)
 
-    if dataset_name == "wikipedia":
+    if dataset_name == "wikipedia": # If you have downloaded the books dataset, you can use wikipedia as a dataset name
         extra_loading_args = {"name": "20220301.de"}
         dataset = _load_dataset(default_loading_args, _file_location("wikipedia"), "wikipedia", extra_loading_args)
         return (dataset, None)
@@ -229,17 +237,19 @@ def load_right_dataset(
             default_loading_args, _file_location("oscar2023"), "oscar-corpus/OSCAR-2301", extra_loading_args, token=True
         )
 
-        dataset = dataset.filter(
-            lambda x: x["meta"]["quality_warnings"] is None
-            or (
-                "noisy" not in x["meta"]["quality_warnings"]
-                and "header" not in x["meta"]["quality_warnings"]
-                and "footer" not in x["meta"]["quality_warnings"]
-                and "short_sentences" not in x["meta"]["quality_warnings"]
-                and "tiny" not in x["meta"]["quality_warnings"]
-                and "adult" not in x["meta"]["quality_warnings"]
-            ),
-        )
+        if "meta" in dataset.column_names:
+            dataset = dataset.filter(
+                lambda x: x["meta"]["quality_warnings"] is None
+                or (
+                    "noisy" not in x["meta"]["quality_warnings"]
+                    and "header" not in x["meta"]["quality_warnings"]
+                    and "footer" not in x["meta"]["quality_warnings"]
+                    and "short_sentences" not in x["meta"]["quality_warnings"]
+                    and "tiny" not in x["meta"]["quality_warnings"]
+                    and "adult" not in x["meta"]["quality_warnings"]
+                ),
+            )
+            dataset = dataset.select_columns(["text"])
         return (dataset, None)
 
     if dataset_name == "germanquad":
@@ -250,7 +260,7 @@ def load_right_dataset(
         return load_and_process_germaneval(tmp_cache_dir, dataset_name, processes)
 
     if dataset_name == "germeval_24":
-        dataset = load_and_process_germaneval_24(tmp_cache_dir, processes)
+        dataset = load_and_process_germeval_24(tmp_cache_dir, processes)
         return (dataset, None)
 
 
@@ -284,18 +294,28 @@ def make_tokenize_function(tokenizer, task_type, max_seq_length=None, truncate=T
 
     def question_answering_tokenize_function(examples):
         questions = [q.strip() for q in examples["question"]]
-        tokenized = tokenizer(
-            questions,
-            examples["context"],
-            truncation="only_second",
-            max_length=max_seq_length,
-            stride=50,
-            return_overflowing_tokens=True,
-            return_offsets_mapping=True,
-        )
-        start_positions, end_positions, ids, answers, context = _get_labels_for_qa(
-            tokenized, examples["answers"], examples["id"], examples["context"]
-        )
+        if truncate:
+            tokenized = tokenizer(
+                questions,
+                examples["context"],
+                truncation="only_second",
+                max_length=max_seq_length,
+                stride=50,
+                return_overflowing_tokens=True,
+                return_offsets_mapping=True,
+            )
+            start_positions, end_positions, ids, answers, context = _get_labels_for_qa(
+                tokenized, examples["answers"], examples["id"], examples["context"]
+            )
+        else:
+            tokenized = tokenizer(
+                questions,
+                examples["context"],
+            )
+            start_positions, end_positions, ids, answers, context = _get_untruncated_labels_for_qa(
+                tokenized, examples["answers"], examples["id"], examples["context"]
+            )
+        
 
         return {
             "id": ids,
@@ -305,7 +325,7 @@ def make_tokenize_function(tokenizer, task_type, max_seq_length=None, truncate=T
             "end_positions": end_positions,
             "answers": answers,
             "context": context,
-            "offset_mapping": tokenized["offset_mapping"],
+            "offset_mapping": tokenized["offset_mapping"], #TODO: OFFSET MAPPING DOES NOT NEED TO BE SPECIFIED FIX AND TEST RIGHT ANSWERS
         }
 
     def pre_training_tokenize_function(examples):
@@ -368,6 +388,22 @@ def _get_labels_for_qa(inputs, answers, ids, context):
             end_positions.append(idx + 1)
 
     return start_positions, end_positions, output_ids, output_answers, output_context
+
+def _get_untruncated_labels_for_qa(inputs, answers, ids, context):
+    start_positions = []
+    end_positions = []
+    output_answers = []
+    for i in range(len(inputs["input_ids"])):
+        answer = answers[i]
+        output_answers.append({"answers": answer, "id": str(ids[i])})
+        sequence_ids = inputs.sequence_ids(i)
+        idx = 0
+        while sequence_ids[idx] != 1:
+            idx += 1
+        context_start = idx
+        start_positions.append(answer["answer_start"][0] + context_start)
+        end_positions.append(answer["answer_start"][0] + len(answer["text"][0].strip()) + context_start)
+    return start_positions, end_positions, ids, output_answers, context
 
 
 def make_group_text_function(max_seq_length, tokenizer):
@@ -438,6 +474,20 @@ def write_to_disk(train_paragraphs, dev_paragraphs, out_dir, part_name=None):
     logger.print(output_dir)
 
 
+def get_stats(dataset):
+    logger.info(f"Number of examples: {len(dataset)}")
+    # Get min, max, mean, median, std of the sequence length
+    dataset = dataset.map(
+        lambda x: {"length": len(x["input_ids"])}, desc="Calculating lengths", remove_columns=dataset.column_names
+    )
+    dataset = dataset.sort("length")
+    logger.info(f"Min sequence length: {dataset['length'][0]}")
+    logger.info(f"Max sequence length: {dataset['length'][-1]}")
+    length = len(dataset)
+    sum_len = sum(dataset["length"])
+    logger.info(f"Mean sequence length: {sum_len / length}")
+    logger.info(f"Median sequence length: {dataset[length // 2]}")
+
 def process_pre_training_dataset(
     dataset,
     tokenizer,
@@ -451,33 +501,40 @@ def process_pre_training_dataset(
     validation_seq_lens,
     dataset_size_splits,
     strategy,
+    stats,
 ):
+    content = {}
     processed_dataset = tokenize_dataset(dataset, tokenizer, max_seq_length, task_type, processes)
+    if stats:
+        get_stats(processed_dataset)
+        exit(0)
+
     if strategy == "sorted":
         processed_dataset = sort_dataset_by_length(processed_dataset)
-    processed_dataset = group_text(processed_dataset, max_seq_length, tokenizer)
-    if strategy == "sorted":
-        total_len = len(processed_dataset)
-    else:
-        processed_dataset, total_len = shuffle_dataset_and_log_length(processed_dataset)
-    train_paragraphs, dev_paragraphs = generate_val_split(processed_dataset, total_len, dev_size)
-    content = {}
+    if strategy != "not_packed":
+        processed_dataset = group_text(processed_dataset, max_seq_length, tokenizer)
+        if strategy == "sorted":
+            total_len = len(processed_dataset)
+        else:
+            processed_dataset, total_len = shuffle_dataset_and_log_length(processed_dataset)
+        train_paragraphs, dev_paragraphs = generate_val_split(processed_dataset, total_len, dev_size)
+        if len(training_seq_lens) > 1:
+            # We want to split the train_paragraphs into n datasets
+            dataset_splits = split_dataset(train_paragraphs, dataset_size_splits, training_seq_lens, max_seq_length, strategy)
+            for i, split in enumerate(dataset_splits):
+                if i == len(training_seq_lens) - 1:
+                    split = cap_training_examples(split, max_train_size)
+                write_to_disk(split, None, out_dir, part_name=i)
+                content[f"train_{i}.jsonl"] = {"seq_len": training_seq_lens[i], "size": len(split)}
 
-    if len(training_seq_lens) > 1:
-        # We want to split the train_paragraphs into n datasets
-        dataset_splits = split_dataset(train_paragraphs, dataset_size_splits, training_seq_lens, max_seq_length, strategy)
-        for i, split in enumerate(dataset_splits):
-            if i == len(training_seq_lens) - 1:
-                split = cap_training_examples(split, max_train_size)
-            write_to_disk(split, None, out_dir, part_name=i)
-            content[f"train_{i}.jsonl"] = {"seq_len": training_seq_lens[i], "size": len(split)}
-
+        else:
+            if training_seq_lens[0] != max_seq_length:
+                train_paragraphs = change_packed_seq_len(train_paragraphs, training_seq_lens[0])
+            train_paragraphs = cap_training_examples(train_paragraphs, max_train_size)
+            write_to_disk(train_paragraphs, None, out_dir)
+            content["train.jsonl"] = {"seq_len": training_seq_lens[0], "size": len(train_paragraphs)}
     else:
-        if training_seq_lens[0] != max_seq_length:
-            train_paragraphs = change_packed_seq_len(train_paragraphs, training_seq_lens[0])
-        train_paragraphs = cap_training_examples(train_paragraphs, max_train_size)
-        write_to_disk(train_paragraphs, None, out_dir)
-        content["train.jsonl"] = {"seq_len": training_seq_lens[0], "size": len(train_paragraphs)}
+        content, dev_paragraphs = select_sequence_lengths(processed_dataset, training_seq_lens, out_dir, content, dev_size)
 
     if len(validation_seq_lens) > 1:
         # We want to put the same dev_paragraphs into n datasets with differing sequence length
@@ -500,6 +557,28 @@ def process_pre_training_dataset(
         with open(os.path.join(out_dir, "dataset_info.yml"), "w") as f:
             yaml.dump(content, f)
 
+def select_sequence_lengths(processed_dataset, training_seq_lens, out_dir, content, dev_size):
+    """
+    This function selects the sequence lengths for the different training datasets. We select the right sequence length to avoid packing and context fragmentation.
+    """
+    dev_paragraphs = processed_dataset.filter(
+        lambda x: len(x["input_ids"]) not in training_seq_lens,
+        desc="Selecting sequence lengths for dev set.",
+    )
+    train_paragraphs = processed_dataset.filter(
+        lambda x: len(x["input_ids"]) in training_seq_lens,
+        desc="Selecting sequence lengths for train set.",
+    )
+    
+    logger.info(f"Number of examples in Dataset: {len(processed_dataset)} of those {len(dev_paragraphs)} have the wrong sequence length. We will use them for the dev set. {len(train_paragraphs)} will be used for training.")
+    __, dev_paragraphs = generate_val_split(dev_paragraphs, len(dev_paragraphs), dev_size)
+    for i, training_seq_len in enumerate(training_seq_lens):
+        split = train_paragraphs.filter(lambda x: len(x["input_ids"][0]) == training_seq_len)
+        if len(split) > 0:
+            write_to_disk(split, None, out_dir, part_name=i)
+            content[f"train_{i}.jsonl"] = {"seq_len": training_seq_lens[i], "size": len(split)}
+
+    return content, dev_paragraphs
 
 def split_dataset(train_paragraphs, dataset_size_splits, training_seq_lens, max_seq_length, strategy):
     """
@@ -534,27 +613,33 @@ def sort_dataset_by_length(dataset):
 
 
 def process_fine_tuning_dataset(
-    train_val_datasets, tokenizer, max_seq_length, task_type, processes, dev_size, max_train_size, out_dir
+    train_val_datasets, tokenizer, max_seq_length, task_type, processes, dev_size, max_train_size, out_dir, stats, truncate
 ):
     processed_datasets = []
     for dataset in train_val_datasets:
         if not dataset:
             processed_datasets.append(None)
             continue
-        processed_datasets.append(tokenize_dataset(dataset, tokenizer, max_seq_length, task_type, processes))
+        processed_datasets.append(tokenize_dataset(dataset, tokenizer, max_seq_length, task_type, processes, truncate))
     processed_datasets[0], total_len = shuffle_dataset_and_log_length(processed_datasets[0])
     if processed_datasets[1] is None:
         train_paragraphs, dev_paragraphs = generate_val_split(processed_datasets[0], total_len, dev_size)
     else:
         train_paragraphs = processed_datasets[0]
         dev_paragraphs = processed_datasets[1].select(range(dev_size)) if dev_size != -1 else processed_datasets[1]
+    if stats:
+        logger.info("Calculating statistics for train set")
+        get_stats(train_paragraphs)
+        logger.info("Calculating statistics for dev set")
+        get_stats(dev_paragraphs)
+        exit(0)
     train_paragraphs = cap_training_examples(train_paragraphs, max_train_size)
     write_to_disk(train_paragraphs, dev_paragraphs, out_dir)
 
 
-def tokenize_dataset(dataset, tokenizer, max_seq_length, task_type, processes):
+def tokenize_dataset(dataset, tokenizer, max_seq_length, task_type, processes, truncate=False):
     return dataset.map(
-        make_tokenize_function(tokenizer, max_seq_length=max_seq_length, task_type=task_type),
+        make_tokenize_function(tokenizer, max_seq_length=max_seq_length, task_type=task_type, truncate=truncate),
         batch_size=16_000,
         batched=True,
         num_proc=processes,
@@ -605,6 +690,9 @@ def change_packed_seq_len(processed_dataset, max_seq_length):
 
 @graceful_exceptions()
 def main(args: Args):
+    if args.get_stats:
+        args.out_dir = "stats"
+        args.only_download = False
     tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(args.tokenizer, use_fast=True)
     logger.info(args)
     if args.max_train_size == -1:
@@ -673,6 +761,7 @@ def main(args: Args):
         "dev_size": args.dev_size,
         "max_train_size": args.max_train_size,
         "out_dir": args.out_dir,
+        "stats": args.get_stats,
     }
     if DATASET_TO_TASK[args.dataset] == "pre-training":
         process_pre_training_dataset(
@@ -684,7 +773,7 @@ def main(args: Args):
             strategy=args.strategy,
         )
     else:
-        process_fine_tuning_dataset(train_val_datasets, **process_args)
+        process_fine_tuning_dataset(train_val_datasets, **process_args, truncate=args.truncate)
 
     if args.conserve_disk_space:
         logger.info("Cleaning download cache")

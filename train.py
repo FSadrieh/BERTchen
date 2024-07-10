@@ -176,7 +176,7 @@ def train(args: TrainingArgs, wandb_logger: CustomWandbLogger, IS_ON_SLURM: bool
     if args.task == "pretraining":
         callbacks.append(ProgressMetricCallback())
         callbacks.append(checkpoint_callback)
-        callbacks.append(early_stopping_callback)
+        # callbacks.append(early_stopping_callback)
     if args.accelerator == "cuda":
         callbacks.append(CUDAMetricsCallback())
 
@@ -194,7 +194,7 @@ def train(args: TrainingArgs, wandb_logger: CustomWandbLogger, IS_ON_SLURM: bool
         strategy=args.distributed_strategy,
         logger=wandb_logger,
         deterministic=args.force_deterministic,
-        callbacks=callbacks,
+        # callbacks=callbacks,
         plugins=plugins,
         precision=args.precision,
         gradient_clip_val=args.grad_clip,
