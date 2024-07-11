@@ -13,9 +13,9 @@
 version: 1
 metadata:
   content_hash:
-    linux-64: f7339c261737a7c0b057292aaf6f7588dfcc38b569d5ebf776ced1c6de022575
-    win-64: ef25283026c0a2915664c09b0d9f50dd9c9a7c82b77d9b86e704f20714493f2e
-    osx-arm64: f4f460f7566d4ae1540d589e05602e199631a98a87f12f4415826676f860b3c9
+    linux-64: 6bb1fb49776253971b8c0dd0b080763f60874c2615d472c7ec3799a7a864ae75
+    win-64: 3e6f90268a58d0fca8e9028f90ca9c657afd20df5d3628da52db5651c3577c7a
+    osx-arm64: c18cda2b5b6b3c942184e8e4864f959c753508d51c81284dcd81fd2bb1f445fd
   channels:
   - url: conda-forge
     used_env_vars: []
@@ -1269,7 +1269,7 @@ package:
   category: main
   optional: false
 - name: blas
-  version: '2.112'
+  version: '2.122'
   manager: conda
   platform: win-64
   dependencies:
@@ -1279,10 +1279,11 @@ package:
     liblapack: 3.9.0
     liblapacke: 3.9.0
     m2w64-gcc-libs: ''
-  url: https://conda.anaconda.org/conda-forge/win-64/blas-2.112-mkl.tar.bz2
+    m2w64-gcc-libs-core: ''
+  url: https://conda.anaconda.org/conda-forge/win-64/blas-2.122-mkl.conda
   hash:
-    md5: 8de274ed649974a72f5ed6bd091647ea
-    sha256: 2bd018ce37ccddb8c591d7cb925d7f9db8dcbd071b2ce00087ff6725410ecd26
+    md5: aee642435696de144ddf91dc02101cf8
+    sha256: e6212fa0399edfd43f577eacfce30a7e8618aa20bbadf48b2c194e4ba2ad00f4
   category: main
   optional: false
 - name: blas-devel
@@ -1311,12 +1312,12 @@ package:
     libcblas: 3.9.0
     liblapack: 3.9.0
     liblapacke: 3.9.0
-    mkl: '>=2021.4.0,<2022.0a0'
-    mkl-devel: ''
-  url: https://conda.anaconda.org/conda-forge/win-64/blas-devel-3.9.0-12_win64_mkl.tar.bz2
+    mkl: '>=2024.1.0,<2025.0a0'
+    mkl-devel: 2024.1.*
+  url: https://conda.anaconda.org/conda-forge/win-64/blas-devel-3.9.0-22_win64_mkl.conda
   hash:
-    md5: 3b58e543843b96159163ee8070dec4df
-    sha256: 1abe58bfa925723fa7fd8e111058805af9b0ade58f22ae0668e21aa879021409
+    md5: adeb834f3b7b06f3d77cd90b7c9d08f0
+    sha256: f549e250b0da7acb6daa4645e259ef040fc60f06f87ae2b07f1c51d9a3745219
   category: main
   optional: false
 - name: brotli-python
@@ -3406,11 +3407,11 @@ package:
   manager: conda
   platform: osx-arm64
   dependencies:
-    libopenblas: '>=0.3.24,<1.0a0'
-  url: https://conda.anaconda.org/conda-forge/osx-arm64/libblas-3.9.0-19_osxarm64_openblas.conda
+    libopenblas: '>=0.3.27,<1.0a0'
+  url: https://conda.anaconda.org/conda-forge/osx-arm64/libblas-3.9.0-22_osxarm64_openblas.conda
   hash:
-    md5: f50b1fd98593278e18319653cff9c475
-    sha256: 51e78e3c9fa57f3fec12936b760928715ba0ab5253d02815202f9ec4c2c9255d
+    md5: aeaf35355ef0f37c7c1ba35b7b7db55f
+    sha256: 8620e13366076011cfcc6b2565c7a2d362c5d3f0423f54b9ef9bfc17b1a012a4
   category: main
   optional: false
 - name: libblas
@@ -3418,11 +3419,11 @@ package:
   manager: conda
   platform: win-64
   dependencies:
-    mkl: 2021.4.0
-  url: https://conda.anaconda.org/conda-forge/win-64/libblas-3.9.0-12_win64_mkl.tar.bz2
+    mkl: 2024.1.0
+  url: https://conda.anaconda.org/conda-forge/win-64/libblas-3.9.0-22_win64_mkl.conda
   hash:
-    md5: 96b3e24fd626a2a964c81045da31c7b1
-    sha256: 7ea60e836b5b4b289acc0f0f29a96ddc578739e592b455af7471f517854834b5
+    md5: 65c56ecdeceffd6c32d3d54db7e02c6e
+    sha256: 4faab445cbd9a13736a206b98fde962d0a9fa80dcbd38300951a8b2863e7c35c
   category: main
   optional: false
 - name: libbrotlicommon
@@ -3560,10 +3561,10 @@ package:
   platform: osx-arm64
   dependencies:
     libblas: 3.9.0
-  url: https://conda.anaconda.org/conda-forge/osx-arm64/libcblas-3.9.0-19_osxarm64_openblas.conda
+  url: https://conda.anaconda.org/conda-forge/osx-arm64/libcblas-3.9.0-22_osxarm64_openblas.conda
   hash:
-    md5: 5460a8d1beffd7f63994d891e6a20da4
-    sha256: 19b1c5e3ddd383ec14540336f4704938218d3c1db4707ae10d5357afb22cccc1
+    md5: 37b3682240a69874a22658dedbca37d9
+    sha256: 2c7902985dc77db1d7252b4e838d92a34b1729799ae402988d62d077868f6cca
   category: main
   optional: false
 - name: libcblas
@@ -3572,10 +3573,10 @@ package:
   platform: win-64
   dependencies:
     libblas: 3.9.0
-  url: https://conda.anaconda.org/conda-forge/win-64/libcblas-3.9.0-12_win64_mkl.tar.bz2
+  url: https://conda.anaconda.org/conda-forge/win-64/libcblas-3.9.0-22_win64_mkl.conda
   hash:
-    md5: 5103ff857d4086ae01f2df8757f31d0b
-    sha256: 8dfa3148412e33bbe52bd011957df5a0d27c9c84899ea2a63870d60b559ac7fd
+    md5: 336c93ab102846c6131cf68e722a68f1
+    sha256: 5503273924650330dc03edd1eb01ec4020b9967b5a4cafc377ba20b976d15590
   category: main
   optional: false
 - name: libcrc32c
@@ -4320,10 +4321,10 @@ package:
   platform: osx-arm64
   dependencies:
     libblas: 3.9.0
-  url: https://conda.anaconda.org/conda-forge/osx-arm64/liblapack-3.9.0-19_osxarm64_openblas.conda
+  url: https://conda.anaconda.org/conda-forge/osx-arm64/liblapack-3.9.0-22_osxarm64_openblas.conda
   hash:
-    md5: 3638eacb084c374f41f9efa40d20a47b
-    sha256: f19cff537403c9feed98c7e18259022102b087f2b72a757e8a417476b9cf30c1
+    md5: f2794950bc005e123b2c21f7fa3d7a6e
+    sha256: 2b1b24c98d15a6a3ad54cf7c8fef1ddccf84b7c557cde08235aaeffd1ff50ee8
   category: main
   optional: false
 - name: liblapack
@@ -4332,10 +4333,10 @@ package:
   platform: win-64
   dependencies:
     libblas: 3.9.0
-  url: https://conda.anaconda.org/conda-forge/win-64/liblapack-3.9.0-12_win64_mkl.tar.bz2
+  url: https://conda.anaconda.org/conda-forge/win-64/liblapack-3.9.0-22_win64_mkl.conda
   hash:
-    md5: e2971c6292cb0daf16bced80b9aa767a
-    sha256: 5a33e7b174c86a7650cdf4d7ebc2bfda63c79960979d04a891bc5c6a26722cd0
+    md5: c752cc2af9f3d8d7b2fdebb915a33ef7
+    sha256: 8b28b361a13819ed83a67d3bfdde750a13bc8b50b9af26d94fd61616d0f2d703
   category: main
   optional: false
 - name: liblapacke
@@ -4360,10 +4361,10 @@ package:
     libblas: 3.9.0
     libcblas: 3.9.0
     liblapack: 3.9.0
-  url: https://conda.anaconda.org/conda-forge/win-64/liblapacke-3.9.0-12_win64_mkl.tar.bz2
+  url: https://conda.anaconda.org/conda-forge/win-64/liblapacke-3.9.0-22_win64_mkl.conda
   hash:
-    md5: 94073b625e52b76c3c55c6883c33def4
-    sha256: d313e36792847e955756c197ccf67409a525b417c38d2e4c24f2f6577abcdb33
+    md5: db33ffa4bae1d2f6d5602afaa048bf6b
+    sha256: ff9388b957de76fa71ebd6075debb14412d3c8cd3a8446e7c365e9d666a0b84b
   category: main
   optional: false
 - name: libnghttp2
@@ -4481,17 +4482,18 @@ package:
   category: main
   optional: false
 - name: libopenblas
-  version: 0.3.24
+  version: 0.3.27
   manager: conda
   platform: osx-arm64
   dependencies:
+    __osx: '>=11.0'
     libgfortran: 5.*
     libgfortran5: '>=12.3.0'
-    llvm-openmp: '>=15.0.7'
-  url: https://conda.anaconda.org/conda-forge/osx-arm64/libopenblas-0.3.24-openmp_hd76b1f2_0.conda
+    llvm-openmp: '>=16.0.6'
+  url: https://conda.anaconda.org/conda-forge/osx-arm64/libopenblas-0.3.27-openmp_h517c56d_1.conda
   hash:
-    md5: aacb05989f358affe1bafd4ea7294db4
-    sha256: 21edfdf620ac5c93571aab452199b6b4622c445441dad88ab4d2eb326a7b91b3
+    md5: 71b8a34d70aa567a990162f327e81505
+    sha256: 46cfcc592b5255262f567cd098be3c61da6bca6c24d640e878dc8342b0f6d069
   category: main
   optional: false
 - name: libparquet
@@ -5102,14 +5104,15 @@ package:
   category: main
   optional: false
 - name: llvm-openmp
-  version: 15.0.7
+  version: 18.1.8
   manager: conda
   platform: osx-arm64
-  dependencies: {}
-  url: https://conda.anaconda.org/conda-forge/osx-arm64/llvm-openmp-15.0.7-h7cfbb63_0.conda
+  dependencies:
+    __osx: '>=11.0'
+  url: https://conda.anaconda.org/conda-forge/osx-arm64/llvm-openmp-18.1.8-hde57baf_0.conda
   hash:
-    md5: 358164e15a9320f11b84a53fb8d8e446
-    sha256: 6cc4cf021fc1f06df3b97598bf9583fe7a04fad6a4eef9882558f7932f362bc0
+    md5: 82393fdbe38448d878a8848b6fcbcefb
+    sha256: 42bc913b3c91934a1ce7ff635e87ee48e2e252632f0cbf607c5a3e4409d9f9dd
   category: main
   optional: false
 - name: lz4-c
@@ -5351,16 +5354,16 @@ package:
   category: main
   optional: false
 - name: mkl
-  version: 2021.4.0
+  version: 2024.1.0
   manager: conda
   platform: win-64
   dependencies:
-    intel-openmp: ''
+    intel-openmp: 2024.*
     tbb: 2021.*
-  url: https://conda.anaconda.org/conda-forge/win-64/mkl-2021.4.0-h0e2418a_729.tar.bz2
+  url: https://conda.anaconda.org/conda-forge/win-64/mkl-2024.1.0-h66d3029_692.conda
   hash:
-    md5: 42fcb45077a716cb8d967117b8b88f28
-    sha256: 176f7a7a85f0ab9aa088ac2f7ea4c71af1136d8848577679c07601500f02fe6e
+    md5: b43ec7ed045323edeff31e348eea8652
+    sha256: abfdb5eb3a17af59a827ea49fcb4d2bf18e70b62498bf3720351962e636cb5b7
   category: main
   optional: false
 - name: mkl-devel
@@ -5377,16 +5380,16 @@ package:
   category: main
   optional: false
 - name: mkl-devel
-  version: 2021.4.0
+  version: 2024.1.0
   manager: conda
   platform: win-64
   dependencies:
-    mkl: 2021.4.0
-    mkl-include: 2021.4.0
-  url: https://conda.anaconda.org/conda-forge/win-64/mkl-devel-2021.4.0-h57928b3_730.tar.bz2
+    mkl: 2024.1.0
+    mkl-include: 2024.1.0
+  url: https://conda.anaconda.org/conda-forge/win-64/mkl-devel-2024.1.0-h57928b3_692.conda
   hash:
-    md5: 8ad71858d5fc071b945bae5d56946b8f
-    sha256: bead6fc67cc499e5e53bd76c912d8905719422995aaafa72b2ca8c7d18164fb5
+    md5: 9b3d1d4916a56fd32460f6fe784dcb51
+    sha256: e4a28f19b0fa0fbecdee57862be859d922fa5c62d031ae44556abcabfe2f85a3
   category: main
   optional: false
 - name: mkl-include
@@ -5401,14 +5404,14 @@ package:
   category: main
   optional: false
 - name: mkl-include
-  version: 2021.4.0
+  version: 2024.1.0
   manager: conda
   platform: win-64
   dependencies: {}
-  url: https://conda.anaconda.org/conda-forge/win-64/mkl-include-2021.4.0-h0e2418a_729.tar.bz2
+  url: https://conda.anaconda.org/conda-forge/win-64/mkl-include-2024.1.0-h66d3029_692.conda
   hash:
-    md5: cfef4528d0bc2dc0d72c4269495e14da
-    sha256: d07c44d4054f208681737522b6f9fe25b00b7f2a10acb2dccda5ef84536bfa79
+    md5: 60233966dc7c0261c9a443120b43c477
+    sha256: 863b85f5811a6ee20713ea158d06a997630840da3037babcbecefd6f8a02e045
   category: main
   optional: false
 - name: mpc
@@ -6726,7 +6729,7 @@ package:
   category: main
   optional: false
 - name: pytorch
-  version: 2.3.1
+  version: 2.1.0
   manager: conda
   platform: linux-64
   dependencies:
@@ -6741,35 +6744,34 @@ package:
     pytorch-mutex: '1.0'
     pyyaml: ''
     sympy: ''
-    torchtriton: 2.3.1
+    torchtriton: 2.1.0
     typing_extensions: ''
-  url: https://conda.anaconda.org/pytorch/linux-64/pytorch-2.3.1-py3.10_cuda11.8_cudnn8.7.0_0.tar.bz2
+  url: https://conda.anaconda.org/pytorch/linux-64/pytorch-2.1.0-py3.10_cuda11.8_cudnn8.7.0_0.tar.bz2
   hash:
-    md5: eb00b4790822b082179cc5cee67d934f
-    sha256: 3b49061de3e481fc684d463d68aae93d87aff35e715730c72431249d877c1ec9
+    md5: 82f9fb558ba63b9e172c2ba547b9efdd
+    sha256: 4e4ab2bf16727c31d6f7127946a6f95db72e3bcc46dfcac2adda01e0b09262de
   category: main
   optional: false
 - name: pytorch
-  version: 2.3.1
+  version: 2.1.0
   manager: conda
   platform: osx-arm64
   dependencies:
     filelock: ''
     jinja2: ''
-    llvm-openmp: <16
     networkx: ''
     python: '>=3.10,<3.11.0a0'
     pyyaml: ''
     sympy: ''
     typing_extensions: ''
-  url: https://conda.anaconda.org/pytorch/osx-arm64/pytorch-2.3.1-py3.10_0.tar.bz2
+  url: https://conda.anaconda.org/pytorch/osx-arm64/pytorch-2.1.0-py3.10_0.tar.bz2
   hash:
-    md5: 434ba442d2695ceba53c52715ace5473
-    sha256: bcd9021ac6321b735b6a45cbd8cb7f05a1d7481cbd73684be54af3dad6800ed4
+    md5: 5b94ad224f848b149cf53a5b0581ec13
+    sha256: cc7a547abe9e4e64c34516dcfca58ba25d7734e1217f60f11d6278235d70ea67
   category: main
   optional: false
 - name: pytorch
-  version: 2.3.1
+  version: 2.1.0
   manager: conda
   platform: win-64
   dependencies:
@@ -6778,7 +6780,7 @@ package:
     intel-openmp: ''
     jinja2: ''
     libuv: '>=1.44.2,<2.0a0'
-    mkl: 2021.4.*
+    mkl: '>=2018'
     networkx: ''
     python: '>=3.10,<3.11.0a0'
     pytorch-cuda: '>=11.8,<11.9'
@@ -6786,10 +6788,10 @@ package:
     pyyaml: ''
     sympy: ''
     typing_extensions: ''
-  url: https://conda.anaconda.org/pytorch/win-64/pytorch-2.3.1-py3.10_cuda11.8_cudnn8_0.tar.bz2
+  url: https://conda.anaconda.org/pytorch/win-64/pytorch-2.1.0-py3.10_cuda11.8_cudnn8_0.tar.bz2
   hash:
-    md5: e1dbea35e934eea56700175b9f63911e
-    sha256: 860178e14e9bdebddfd3c45e696fd59d8b88c2a767fa5916b9fc530425629231
+    md5: a6cba6604d88a6394f840e33d27bedd3
+    sha256: e17ce743ad14bfff3a550c649c20e89a10e8fbd8e8662d88b5ac10cdba26f238
   category: main
   optional: false
 - name: pytorch-cuda
@@ -7388,22 +7390,23 @@ package:
   category: main
   optional: false
 - name: scikit-learn
-  version: 1.3.1
+  version: 1.5.1
   manager: conda
   platform: osx-arm64
   dependencies:
-    joblib: '>=1.1.1'
-    libcxx: '>=15.0.7'
-    llvm-openmp: '>=15.0.7'
-    numpy: '>=1.22.4,<2.0a0'
+    __osx: '>=11.0'
+    joblib: '>=1.2.0'
+    libcxx: '>=16'
+    llvm-openmp: '>=16.0.6'
+    numpy: '>=1.19,<3'
     python: '>=3.10,<3.11.0a0'
     python_abi: 3.10.*
     scipy: ''
-    threadpoolctl: '>=2.0.0'
-  url: https://conda.anaconda.org/conda-forge/osx-arm64/scikit-learn-1.3.1-py310h150d4d2_0.conda
+    threadpoolctl: '>=3.1.0'
+  url: https://conda.anaconda.org/conda-forge/osx-arm64/scikit-learn-1.5.1-py310h64e73be_0.conda
   hash:
-    md5: b81d6a310a56f7b553ebddde1e13bb92
-    sha256: 8084f69ace2e63f61f14dbd52872f44cf9bac6add3ef72a4ed4fa20a7db8ebe0
+    md5: b61296bb05a31779d718185d984e14d8
+    sha256: 9b4a39f83e7b51b9c3e296b74810a4d7df96548547ad7611ed4b0a5084a1191a
   category: main
   optional: false
 - name: scikit-learn
@@ -8231,17 +8234,17 @@ package:
   category: main
   optional: false
 - name: torchtriton
-  version: 2.3.1
+  version: 2.1.0
   manager: conda
   platform: linux-64
   dependencies:
     filelock: ''
     python: '>=3.10,<3.11.0a0'
     pytorch: ''
-  url: https://conda.anaconda.org/pytorch/linux-64/torchtriton-2.3.1-py310.tar.bz2
+  url: https://conda.anaconda.org/pytorch/linux-64/torchtriton-2.1.0-py310.tar.bz2
   hash:
-    md5: bf074d1248b4149efd067e3d25631fb1
-    sha256: 535b1f413c9ac8f4da34e266b94318c5f897d0b4eab37a4b993889dcdb1e74be
+    md5: 5ef34d1428f3ea5dbe520c67d74048a5
+    sha256: 9a98f884ba4a34c9fac59127e5f7930441ecdcc8628e135fe8d0f480540d62b6
   category: main
   optional: false
 - name: tqdm
@@ -9155,153 +9158,6 @@ package:
     sha256: a92db1683a5b141a0f4371d251ae9f73e9aef629b3a58a50d0ef430266c68782
   category: main
   optional: false
-- name: intel-openmp
-  version: 2021.4.0
-  manager: pip
-  platform: win-64
-  dependencies: {}
-  url: https://files.pythonhosted.org/packages/6f/21/b590c0cc3888b24f2ac9898c41d852d7454a1695fbad34bee85dba6dc408/intel_openmp-2021.4.0-py2.py3-none-win_amd64.whl
-  hash:
-    sha256: eef4c8bcc8acefd7f5cd3b9384dbf73d59e2c99fc56545712ded913f43c4a94f
-  category: main
-  optional: false
-- name: mkl
-  version: 2021.4.0
-  manager: pip
-  platform: win-64
-  dependencies:
-    intel-openmp: '>=2021.0.0,<2022.0.0'
-    tbb: '>=2021.0.0,<2022.0.0'
-  url: https://files.pythonhosted.org/packages/fe/1c/5f6dbf18e8b73e0a5472466f0ea8d48ce9efae39bd2ff38cebf8dce61259/mkl-2021.4.0-py2.py3-none-win_amd64.whl
-  hash:
-    sha256: ceef3cafce4c009dd25f65d7ad0d833a0fbadc3d8903991ec92351fe5de1e718
-  category: main
-  optional: false
-- name: nvidia-cublas-cu12
-  version: 12.1.3.1
-  manager: pip
-  platform: linux-64
-  dependencies: {}
-  url: https://files.pythonhosted.org/packages/37/6d/121efd7382d5b0284239f4ab1fc1590d86d34ed4a4a2fdb13b30ca8e5740/nvidia_cublas_cu12-12.1.3.1-py3-none-manylinux1_x86_64.whl
-  hash:
-    sha256: ee53ccca76a6fc08fb9701aa95b6ceb242cdaab118c3bb152af4e579af792728
-  category: main
-  optional: false
-- name: nvidia-cuda-cupti-cu12
-  version: 12.1.105
-  manager: pip
-  platform: linux-64
-  dependencies: {}
-  url: https://files.pythonhosted.org/packages/7e/00/6b218edd739ecfc60524e585ba8e6b00554dd908de2c9c66c1af3e44e18d/nvidia_cuda_cupti_cu12-12.1.105-py3-none-manylinux1_x86_64.whl
-  hash:
-    sha256: e54fde3983165c624cb79254ae9818a456eb6e87a7fd4d56a2352c24ee542d7e
-  category: main
-  optional: false
-- name: nvidia-cuda-nvrtc-cu12
-  version: 12.1.105
-  manager: pip
-  platform: linux-64
-  dependencies: {}
-  url: https://files.pythonhosted.org/packages/b6/9f/c64c03f49d6fbc56196664d05dba14e3a561038a81a638eeb47f4d4cfd48/nvidia_cuda_nvrtc_cu12-12.1.105-py3-none-manylinux1_x86_64.whl
-  hash:
-    sha256: 339b385f50c309763ca65456ec75e17bbefcbbf2893f462cb8b90584cd27a1c2
-  category: main
-  optional: false
-- name: nvidia-cuda-runtime-cu12
-  version: 12.1.105
-  manager: pip
-  platform: linux-64
-  dependencies: {}
-  url: https://files.pythonhosted.org/packages/eb/d5/c68b1d2cdfcc59e72e8a5949a37ddb22ae6cade80cd4a57a84d4c8b55472/nvidia_cuda_runtime_cu12-12.1.105-py3-none-manylinux1_x86_64.whl
-  hash:
-    sha256: 6e258468ddf5796e25f1dc591a31029fa317d97a0a94ed93468fc86301d61e40
-  category: main
-  optional: false
-- name: nvidia-cudnn-cu12
-  version: 8.9.2.26
-  manager: pip
-  platform: linux-64
-  dependencies:
-    nvidia-cublas-cu12: '*'
-  url: https://files.pythonhosted.org/packages/ff/74/a2e2be7fb83aaedec84f391f082cf765dfb635e7caa9b49065f73e4835d8/nvidia_cudnn_cu12-8.9.2.26-py3-none-manylinux1_x86_64.whl
-  hash:
-    sha256: 5ccb288774fdfb07a7e7025ffec286971c06d8d7b4fb162525334616d7629ff9
-  category: main
-  optional: false
-- name: nvidia-cufft-cu12
-  version: 11.0.2.54
-  manager: pip
-  platform: linux-64
-  dependencies: {}
-  url: https://files.pythonhosted.org/packages/86/94/eb540db023ce1d162e7bea9f8f5aa781d57c65aed513c33ee9a5123ead4d/nvidia_cufft_cu12-11.0.2.54-py3-none-manylinux1_x86_64.whl
-  hash:
-    sha256: 794e3948a1aa71fd817c3775866943936774d1c14e7628c74f6f7417224cdf56
-  category: main
-  optional: false
-- name: nvidia-curand-cu12
-  version: 10.3.2.106
-  manager: pip
-  platform: linux-64
-  dependencies: {}
-  url: https://files.pythonhosted.org/packages/44/31/4890b1c9abc496303412947fc7dcea3d14861720642b49e8ceed89636705/nvidia_curand_cu12-10.3.2.106-py3-none-manylinux1_x86_64.whl
-  hash:
-    sha256: 9d264c5036dde4e64f1de8c50ae753237c12e0b1348738169cd0f8a536c0e1e0
-  category: main
-  optional: false
-- name: nvidia-cusolver-cu12
-  version: 11.4.5.107
-  manager: pip
-  platform: linux-64
-  dependencies:
-    nvidia-cublas-cu12: '*'
-    nvidia-nvjitlink-cu12: '*'
-    nvidia-cusparse-cu12: '*'
-  url: https://files.pythonhosted.org/packages/bc/1d/8de1e5c67099015c834315e333911273a8c6aaba78923dd1d1e25fc5f217/nvidia_cusolver_cu12-11.4.5.107-py3-none-manylinux1_x86_64.whl
-  hash:
-    sha256: 8a7ec542f0412294b15072fa7dab71d31334014a69f953004ea7a118206fe0dd
-  category: main
-  optional: false
-- name: nvidia-cusparse-cu12
-  version: 12.1.0.106
-  manager: pip
-  platform: linux-64
-  dependencies:
-    nvidia-nvjitlink-cu12: '*'
-  url: https://files.pythonhosted.org/packages/65/5b/cfaeebf25cd9fdec14338ccb16f6b2c4c7fa9163aefcf057d86b9cc248bb/nvidia_cusparse_cu12-12.1.0.106-py3-none-manylinux1_x86_64.whl
-  hash:
-    sha256: f3b50f42cf363f86ab21f720998517a659a48131e8d538dc02f8768237bd884c
-  category: main
-  optional: false
-- name: nvidia-nccl-cu12
-  version: 2.20.5
-  manager: pip
-  platform: linux-64
-  dependencies: {}
-  url: https://files.pythonhosted.org/packages/4b/2a/0a131f572aa09f741c30ccd45a8e56316e8be8dfc7bc19bf0ab7cfef7b19/nvidia_nccl_cu12-2.20.5-py3-none-manylinux2014_x86_64.whl
-  hash:
-    sha256: 057f6bf9685f75215d0c53bf3ac4a10b3e6578351de307abad9e18a99182af56
-  category: main
-  optional: false
-- name: nvidia-nvjitlink-cu12
-  version: 12.5.82
-  manager: pip
-  platform: linux-64
-  dependencies: {}
-  url: https://files.pythonhosted.org/packages/75/bc/e0d0dbb85246a086ab14839979039647bce501d8c661a159b8b019d987b7/nvidia_nvjitlink_cu12-12.5.82-py3-none-manylinux2014_x86_64.whl
-  hash:
-    sha256: f9b37bc5c8cf7509665cb6ada5aaa0ce65618f2332b7d3e78e9790511f111212
-  category: main
-  optional: false
-- name: nvidia-nvtx-cu12
-  version: 12.1.105
-  manager: pip
-  platform: linux-64
-  dependencies: {}
-  url: https://files.pythonhosted.org/packages/da/d3/8057f0587683ed2fcd4dbfbdfdfa807b9160b809976099d36b8f60d08f03/nvidia_nvtx_cu12-12.1.105-py3-none-manylinux1_x86_64.whl
-  hash:
-    sha256: dc21cf308ca5691e7c04d962e213f8a4aa9bbfa23d95412f452254c2caeb09e5
-  category: main
-  optional: false
 - name: pipx
   version: 1.2.1
   manager: pip
@@ -9445,27 +9301,6 @@ package:
   url: https://files.pythonhosted.org/packages/4a/e9/ce8937fa8d97f764c7756cdaf46222c9efea92e6c4b8d6e0dae4cdfeefea/simple_parsing-0.1.4-py3-none-any.whl
   hash:
     sha256: 1fb042499d8872090ed3aad1f60f4d53026d2062942196a600933bc83787328e
-  category: main
-  optional: false
-- name: tbb
-  version: 2021.13.0
-  manager: pip
-  platform: win-64
-  dependencies: {}
-  url: https://files.pythonhosted.org/packages/f1/24/500811330b3b070e5995c3275181dbcd00c06cef26c6ebfe6ee1ca9b6223/tbb-2021.13.0-py3-none-win_amd64.whl
-  hash:
-    sha256: 3528a53e4bbe64b07a6112b4c5a00ff3c61924ee46c9c68e004a1ac7ad1f09c3
-  category: main
-  optional: false
-- name: triton
-  version: 2.3.1
-  manager: pip
-  platform: linux-64
-  dependencies:
-    filelock: '*'
-  url: https://files.pythonhosted.org/packages/d7/69/8a9fde07d2d27a90e16488cdfe9878e985a247b2496a4b5b1a2126042528/triton-2.3.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
-  hash:
-    sha256: 3c84595cbe5e546b1b290d2a58b1494df5a2ef066dd890655e5b8a8a92205c33
   category: main
   optional: false
 - name: userpath
