@@ -39,7 +39,7 @@ class CustomTrainingEpochLoop(_TrainingEpochLoop):
         while not self.done:
             try:
                 self.advance(data_fetcher)
-                if self.on_advance_end() and self.num_datasets - 1 > self.dataset_switches:
+                if self.on_advance_end(data_fetcher) and self.num_datasets - 1 > self.dataset_switches:
                     self.dataset_switches += 1
                     break
                 self._restarting = False
@@ -64,12 +64,12 @@ class CustomTrainingEpochLoop(_TrainingEpochLoop):
 
         return False
 
-    def on_advance_end(self) -> bool:
+    def on_advance_end(self, data_fetcher) -> bool:
         # -----------------------------------------
         # VALIDATE IF NEEDED
         # -----------------------------------------
         switch_datatset = False
-        should_check_val = self._should_check_val_fx()
+        should_check_val = self._should_check_val_fx(data_fetcher)
         if should_check_val:
             self.trainer.validating = True
             self.val_loop.run()

@@ -16,13 +16,14 @@ dependencies:
   - pytorch::pytorch-cuda=11.8 # [win]
   
   - wandb
-  - lightning
+  - lightning=2.3.2
   - transformers
   - tokenizers
   - datasets
   - evaluate
   - accelerate
   - sentencepiece
+  - safetensors
 
   # Good to have
   - numpy
@@ -47,6 +48,8 @@ dependencies:
       - pipx
       - simple_parsing
       - print-on-steroids[exceptions]
+      - flash-attn
+      - pytorch-triton
 
 # Non-standard section listing target platforms for conda-lock:
 platforms:
