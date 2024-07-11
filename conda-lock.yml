@@ -13,9 +13,9 @@
 version: 1
 metadata:
   content_hash:
-    linux-64: 6bb1fb49776253971b8c0dd0b080763f60874c2615d472c7ec3799a7a864ae75
-    win-64: 3e6f90268a58d0fca8e9028f90ca9c657afd20df5d3628da52db5651c3577c7a
-    osx-arm64: c18cda2b5b6b3c942184e8e4864f959c753508d51c81284dcd81fd2bb1f445fd
+    linux-64: c87617a9b4ad3090e66b931940c1ed5cc213e49889290bdebb8b6f74cbb3efef
+    win-64: 98a0ba2fa1ee8778a961088a50438a26dfb9658ba8e53fb2f9999d7e06ceae40
+    osx-arm64: b08c4bc26cfc413aa94481e39ee33a4d7a123cbc4476da7585c3c2abec84b1bf
   channels:
   - url: conda-forge
     used_env_vars: []
@@ -9235,36 +9235,6 @@ package:
   url: https://files.pythonhosted.org/packages/61/89/e81e3b458b777a4fefb265e3d7501775675a2465a57ae50b9f9a240ec092/print_on_steroids-1.2.3-py3-none-any.whl
   hash:
     sha256: ed8e28a3b798d86cc9c185486ba713948600db433c2e3f562606b6d1322dc951
-  category: main
-  optional: false
-- name: pytorch-triton
-  version: 0.0.1
-  manager: pip
-  platform: linux-64
-  dependencies: {}
-  url: https://files.pythonhosted.org/packages/5f/94/f7a38f4323a89249f7e426850fb1cd51c19b0ebaf9c23f4a375b9a541870/pytorch_triton-0.0.1-py3-none-any.whl
-  hash:
-    sha256: f3f1052e3e4ac2937bfbbb5bc3b73854319c43d2a597594465e62f514e7be890
-  category: main
-  optional: false
-- name: pytorch-triton
-  version: 0.0.1
-  manager: pip
-  platform: osx-arm64
-  dependencies: {}
-  url: https://files.pythonhosted.org/packages/5f/94/f7a38f4323a89249f7e426850fb1cd51c19b0ebaf9c23f4a375b9a541870/pytorch_triton-0.0.1-py3-none-any.whl
-  hash:
-    sha256: f3f1052e3e4ac2937bfbbb5bc3b73854319c43d2a597594465e62f514e7be890
-  category: main
-  optional: false
-- name: pytorch-triton
-  version: 0.0.1
-  manager: pip
-  platform: win-64
-  dependencies: {}
-  url: https://files.pythonhosted.org/packages/5f/94/f7a38f4323a89249f7e426850fb1cd51c19b0ebaf9c23f4a375b9a541870/pytorch_triton-0.0.1-py3-none-any.whl
-  hash:
-    sha256: f3f1052e3e4ac2937bfbbb5bc3b73854319c43d2a597594465e62f514e7be890
   category: main
   optional: false
 - name: simple-parsing
