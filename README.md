@@ -1,4 +1,59 @@
-# An opinionated template for reproducible NLP research code
+# Efficient BERT pre-training
+
+This repository provides the paper and code of **[Explainable Soft Prompts](explainable_soft_prompts.pdf)**, a study that explores prompt tuning across multiple Large Language Models (LLMs) for improved interpretability and transferability.
+
+## Introduction
+
+Prompt tuning in natural language processing allows leveraging Large Language Models (LLMs) efficiently. Yet soft prompts struggle with transferability between models and interpretability. This study introduces a method of tuning soft prompts across multiple models to uncover the **"token splitting effect"**. Prompt tokens align with specific models, lying in their embedding spaces and playing a crucial role in their performance. We show how this is hindering transferability, but allowing prompt compression after training. Our research highlights the soft prompt functionality across multiple models and sets a foundation for optimizing soft prompts through strategic compression and a deeper understanding of token importance.
+
+## Reproducibility
+
+In <code>cfgs</code> all used training configurations are stored and in <code>slurm/sbatchs</code> all sbatchs for running on a slurm cluster.
+
+TODO: To reproduce the paper results, use the scripts from the <code>scripts</code> folder or <code>run_emotion.sh</code>, <code>run_imdb.sh</code> and <code>run_mnli.sh</code>.
+
+For detailed usage, see the information on the NLP research template, this works builds upon.
+
+The recommended usage is:
+
+1. Cloning of the repository with
+
+```bash
+git clone git@github.com:FSadrieh/efficient-bert-pretraining.git
+cd efficient-bert-pretraining
+```
+
+2. Create conda enviroment and install the triton dependency:
+
+```bash
+conda-lock install --name <env-name> conda-lock.yml
+conda activate <env-name>
+pip install triton==2.1.0
+```
+
+3. Run the desired script to reproduce specific results using the <code>scripts</code> folder.
+
+## Cite this work
+
+If you use the code in this repository, please cite:
+
+```
+@software{EfficientBertPretraining,
+  author = {Sadrieh, Frederic},
+  title  = {{Efficient Bert Pre-training}},
+  url    = {(https://github.com/FSadrieh/efficient-bert-pretraining},
+  month  = {08},
+  year   = {2024}
+}
+```
+
+## Appendix
+
+The code in this repository is built based on a [NLP Research Template](https://github.com/konstantinjdobler/nlp-research-template).
+
+<details><summary>Template documentation</summary>
+
+# NLP research template
 
 [![Docker Hub](https://img.shields.io/docker/v/konstantinjdobler/nlp-research-template/latest?color=blue&label=docker&logo=docker)](https://hub.docker.com/r/konstantinjdobler/nlp-research-template/tags)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
@@ -82,7 +137,7 @@ conda-lock --file ppc64le.environment.yml --lockfile ppc64le.conda-lock.yml
 </p>
 </details>
 
-### Docker (recommended)
+### Docker (We recommend the usage of conda (See Reproducibility), the usage of Docker is not tested)
 
 For fully reproducible environments and running on HPC clusters, we provide pre-built docker images at [konstantinjdobler/nlp-research-template](https://hub.docker.com/r/konstantinjdobler/nlp-research-template/tags). We also provide a `Dockerfile` that allows you to build new docker images with updated dependencies:
 
@@ -214,10 +269,7 @@ After having installed the [Remote-SSH-](https://code.visualstudio.com/docs/remo
 4. Press <code>Reopen in Container</code> and wait for VS Code to set everything up. for the first time or when you change `devcontainer.json`, you will need to do <code>Rebuild and reopen in Container</code>.
 
 There is a bit of setup: for a proper dev environment, you will need to configure mounts (cache directories, your datasets, ...) and environment variables like for a regular docker run command, have a look inside [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json).
-
-`conda-lock` is automatically installed for you but you have to add the `--micromamba` flag inside the Dev Container (e.g. `conda-lock --micromamba -f environment.yml`). Otherwise, conda-lock uses an anaconda installation, which takes over 8 hours to resolve the packages in the environments.
-
-We automatically mount the `~/.gitconfig` and `~/.netrc` files for ease of use of Git and W&B, however these files have to exist on your host machine. They are created when executing `git config --global user.email your.name@domain.com` and `wandb login`, respectively.
+`conda-lock` is automatically installed for you but you have to add the `--micromamba` flag inside the Dev Container (e.g. `conda-lock --micromamba -f environment.yml`).
 
 If you want to use GPUs for development, you also need to specify the GPU you want to use in [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json). However, this is a bit cumbersome if you are often switching between GPUs. Alternatively, you edit your code in the Dev Container (without a GPU) but start all actual development runs of your script like you would for training with `run-in-docker.sh` and select the GPU ad-hoc. The nice advantage of Dev Containers is that you are still using the exact same docker container for both.
 
@@ -232,30 +284,4 @@ Sometimes it's just quicker or unavoidable to create an environment via `conda-l
 
 We use the `ruff` linter and `black` formatter. You should install their VS Code extensions and enable "Format on Save" inside VS Code.
 
-## Continuous Integration and Deployment
-
-Our project uses GitHub Actions for CI/CD to automate the building and pushing of our Docker images to Docker Hub. This ensures that our Docker images are always up-to-date with the latest dependencies specified in `conda-lock.yml`.
-
-### Prerequisites for CI/CD
-
-To work with this CI/CD setup, you need to:
-
-- Set the following secrets in your GitHub repository:
-  - `DOCKER_REGISTRY`: The Docker registry URL (if using Docker Hub, this is not needed).
-  - `DOCKER_REGISTRY_TOKEN`: Your Docker Hub access token or password.
-- Replace `konstantinjdobler` and mentions of `nlp-research-template` with your own Docker ID in the workflow file [`.github/workflows/docker.yml`](./.github/workflows/docker.yml)
-
-If you do not want to automatically build and push images, just delete the workflow file.
-
-### How to Update Docker Images
-
-To update the Docker image:
-
-1. Make necessary changes to the `Dockerfile` or update dependencies in the `environment.yml`.
-2. Generate a new `conda-lock.yml` by running `conda-lock -f environment.yml`.
-3. Commit and push the changes to the `main` branch.
-4. The GitHub Actions workflow will automatically build and push the new Docker image to Docker Hub.
-
-### Docker Tags
-
-The Docker images are tagged with the PyTorch and CUDA versions extracted from `conda-lock.yml`, as well as a `latest` tag for the most recent build. Use the specific tags if you need a particular version of PyTorch or CUDA, or use the `latest` tag for the most recent build.
+</details>
