@@ -48,8 +48,10 @@ dependencies:
       - pipx
       - simple_parsing
       - print-on-steroids[exceptions]
-      - flash-attn==2.5.9.post1
-      # - triton==2.1.0 # Will cause an error with conda-lock please install it afterwards with pip install triton==2.1.0
+      - packaging
+      # - flash-attn==2.5.9.post1
+      # - triton==2.1.0 
+      # Both of Will cause an error with conda-lock please install it afterwards with pip install triton==2.1.0 flash-attn==2.5.9.post1
 
 # Non-standard section listing target platforms for conda-lock:
 platforms:
