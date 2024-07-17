@@ -226,7 +226,7 @@ def load_right_dataset(
         dataset = _load_dataset(default_loading_args, _file_location("cc100"), "cc100", extra_loading_args)
         return (dataset, None)
 
-    if dataset_name == "wikipedia": # If you have downloaded the books dataset, you can use wikipedia as a dataset name
+    if dataset_name == "wikipedia":  # If you have downloaded the books dataset, you can use wikipedia as a dataset name
         extra_loading_args = {"name": "20220301.de"}
         dataset = _load_dataset(default_loading_args, _file_location("wikipedia"), "wikipedia", extra_loading_args)
         return (dataset, None)
@@ -311,11 +311,13 @@ def make_tokenize_function(tokenizer, task_type, max_seq_length=None, truncate=T
             tokenized = tokenizer(
                 questions,
                 examples["context"],
+                return_offsets_mapping=True,
             )
             start_positions, end_positions, ids, answers, context = _get_untruncated_labels_for_qa(
-                tokenized, examples["answers"], examples["id"], examples["context"]
+                tokenized, examples["answers"], examples["id"], examples["context"], tokenizer
             )
-        
+
+
 
         return {
             "id": ids,
@@ -325,7 +327,9 @@ def make_tokenize_function(tokenizer, task_type, max_seq_length=None, truncate=T
             "end_positions": end_positions,
             "answers": answers,
             "context": context,
-            "offset_mapping": tokenized["offset_mapping"], #TODO: OFFSET MAPPING DOES NOT NEED TO BE SPECIFIED FIX AND TEST RIGHT ANSWERS
+            "offset_mapping": tokenized[
+                "offset_mapping"
+            ],
         }
 
     def pre_training_tokenize_function(examples):
@@ -389,20 +393,48 @@ def _get_labels_for_qa(inputs, answers, ids, context):
 
     return start_positions, end_positions, output_ids, output_answers, output_context
 
-def _get_untruncated_labels_for_qa(inputs, answers, ids, context):
+
+def _get_untruncated_labels_for_qa(inputs, answers, ids, context, tokenizer):
+    def _check_correctness(start_positions, end_positions, output_answers, idx):
+        return (
+            tokenizer.decode(inputs["input_ids"][idx][start_positions[idx] : end_positions[idx]])
+            == output_answers[idx]["answers"]["text"][0].strip()
+        )
+
     start_positions = []
     end_positions = []
     output_answers = []
-    for i in range(len(inputs["input_ids"])):
+    for i, offset in enumerate(inputs["offset_mapping"]):
         answer = answers[i]
         output_answers.append({"answers": answer, "id": str(ids[i])})
         sequence_ids = inputs.sequence_ids(i)
         idx = 0
         while sequence_ids[idx] != 1:
             idx += 1
-        context_start = idx
-        start_positions.append(answer["answer_start"][0] + context_start)
-        end_positions.append(answer["answer_start"][0] + len(answer["text"][0].strip()) + context_start)
+
+        while offset[idx][0] <= answer["answer_start"][0]:
+            idx += 1
+        start_positions.append(idx - 1)
+
+        while sequence_ids[idx] == 1:
+            idx += 1
+            if idx == len(sequence_ids):
+                idx -= 1
+                break
+
+        end_char = answer["answer_start"][0] + len(answer["text"][0].strip())
+
+        while offset[idx][1] >= end_char:
+                idx -= 1
+        end_positions.append(idx + 1)
+
+    # for i, answer in enumerate(output_answers):
+    #     if not _check_correctness(start_positions, end_positions, output_answers, idx):
+    #         # Found bug where we need to add one more token to the output
+    #         end_positions[i] += 1
+    #         if not _check_correctness(start_positions, end_positions, output_answers, idx):
+    #             logger.info(f"Correct tokenization not possible for {answer['id']}")
+
     return start_positions, end_positions, ids, output_answers, context
 
 
@@ -486,7 +518,8 @@ def get_stats(dataset):
     length = len(dataset)
     sum_len = sum(dataset["length"])
     logger.info(f"Mean sequence length: {sum_len / length}")
-    logger.info(f"Median sequence length: {dataset[length // 2]}")
+    logger.info(f"Median sequence length: {dataset[length // 2]['length'][0]}")
+
 
 def process_pre_training_dataset(
     dataset,
@@ -557,6 +590,7 @@ def process_pre_training_dataset(
         with open(os.path.join(out_dir, "dataset_info.yml"), "w") as f:
             yaml.dump(content, f)
 
+
 def select_sequence_lengths(processed_dataset, training_seq_lens, out_dir, content, dev_size):
     """
     This function selects the sequence lengths for the different training datasets. We select the right sequence length to avoid packing and context fragmentation.
@@ -569,8 +603,10 @@ def select_sequence_lengths(processed_dataset, training_seq_lens, out_dir, conte
         lambda x: len(x["input_ids"]) in training_seq_lens,
         desc="Selecting sequence lengths for train set.",
     )
-    
-    logger.info(f"Number of examples in Dataset: {len(processed_dataset)} of those {len(dev_paragraphs)} have the wrong sequence length. We will use them for the dev set. {len(train_paragraphs)} will be used for training.")
+
+    logger.info(
+        f"Number of examples in Dataset: {len(processed_dataset)} of those {len(dev_paragraphs)} have the wrong sequence length. We will use them for the dev set. {len(train_paragraphs)} will be used for training."
+    )
     __, dev_paragraphs = generate_val_split(dev_paragraphs, len(dev_paragraphs), dev_size)
     for i, training_seq_len in enumerate(training_seq_lens):
         split = train_paragraphs.filter(lambda x: len(x["input_ids"][0]) == training_seq_len)
@@ -579,6 +615,7 @@ def select_sequence_lengths(processed_dataset, training_seq_lens, out_dir, conte
             content[f"train_{i}.jsonl"] = {"seq_len": training_seq_lens[i], "size": len(split)}
 
     return content, dev_paragraphs
+
 
 def split_dataset(train_paragraphs, dataset_size_splits, training_seq_lens, max_seq_length, strategy):
     """

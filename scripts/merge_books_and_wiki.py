@@ -14,6 +14,7 @@ from datasets import load_dataset
 from print_on_steroids import logger
 from simple_parsing import field, parse
 
+
 @dataclass
 class Args:
     out_dir: str = field(alias="-o")
@@ -37,11 +38,12 @@ def main():
             if fnmatch(name, "*txt"):
                 with open(os.path.join(path, name), "r") as f:
                     book = f.read()
-                    book = book.replace("\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n", "")
+                    book = book.replace(
+                        "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n", ""
+                    )
                     books_dataset.append(book)
 
     logger.info(f"Loaded book dataset with {len(books_dataset)} examples")
-
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

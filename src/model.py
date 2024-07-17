@@ -7,8 +7,6 @@ from transformers.modeling_utils import PreTrainedModel
 import collections
 import torch
 
-# from torch.utils.flop_counter import FlopCounterMode
-# from print_on_steroids import logger
 import datetime
 
 from src.utils import configure_optimizer, define_wandb_metrics
@@ -112,19 +110,6 @@ class PretrainBERT(L.LightningModule):
             add_dataloader_idx=False,
         )
 
-    # def on_fit_start(self):
-    #     # We choose this implemation (taken from https://github.com/leonardhorns/rlp-usageinfo) over the ThroughputMonitor, since our micro batch size is not always constant
-    #     self.flop_counter = FlopCounterMode(self.model, display=False)
-    #     self.flop_counter.__enter__()
-    #     logger.info("Flop counter started (model fitting)")
-
-    # def on_fit_end(self):
-    #     self.flop_counter.__exit__(None, None, None)
-    #     fit_flops = self.flop_counter.get_total_flops()
-    #     self.total_flops += fit_flops
-    # self.log("flops", self.total_flops, on_step=False, on_epoch=False)
-    # logger.info(f"Flop counter ended (model fitting). FLOPs: {fit_flops}")
-
     def configure_optimizers(self):
         return configure_optimizer(
             list(self.model.named_parameters()) + list(self.head.named_parameters()),
@@ -191,7 +176,7 @@ class QABERT(L.LightningModule):
         self.log("val/QA_f1", results["f1"], on_step=False, on_epoch=True, sync_dist=True)
         self.log("val/QA_exact_match", results["exact_match"], on_step=False, on_epoch=True, sync_dist=True)
 
-    def compute_prediction(self, start_logits, end_logits, ids, contexts, offset_mapping, n_best=20, max_answer_length=30):
+    def compute_prediction(self, start_logits, end_logits, ids, contexts, offset_mapping, n_best=20, max_answer_length=100):
         # The code is adapted from the huggingface guide to QA https://huggingface.co/learn/nlp-course/chapter7/7
         example_to_features = collections.defaultdict(list)
         for idx, example_id in enumerate(ids):

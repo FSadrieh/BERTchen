@@ -44,9 +44,7 @@ def main():
         logger.info("Sentiment: positive: 2; neutral: 1; negative: 0")
     logger.info(f"Loaded dataset with {len(dataset['train'])} examples")
 
-    
-
-    #Show possible classes to the user
+    # Show possible classes to the user
     prediction = []
     labels = []
     correct = 0
@@ -72,7 +70,7 @@ def main():
                 label = 0
             labels.append(label)
             print(label)
-        
+
         if prediction[i] == label:
             correct += 1
         print()
@@ -85,5 +83,6 @@ def main():
         for i in range(args.num_samples):
             writer.write({"text": dataset["train"][i]["text"], "label": labels[i], "prediction": prediction[i]})
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
