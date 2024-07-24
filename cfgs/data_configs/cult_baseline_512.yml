@@ -1,0 +1,6 @@
+out_dir: /hpi/fs00/share/fg-demelo/efficient-bert-pretraining/data/CulturaX_2_percent/CulturaX_baseline_512
+dataset: CulturaX
+data_location: /hpi/fs00/share/fg-demelo/efficient-bert-pretraining/data/CulturaX_2_percent/train.jsonl
+train_sequence_lengths: 512
+val_sequence_lengths: 64,128,256,512
+processes: 24

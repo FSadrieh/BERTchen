@@ -150,6 +150,7 @@ def train(args: TrainingArgs, wandb_logger: CustomWandbLogger, IS_ON_SLURM: bool
     if args.repo_id:
         logger.info("Uploading model to Hugging Face Model Hub...")
         model.model.push_to_hub(repo_id=args.repo_id, private=args.private, token=True, safe_serialization=True)
+        tokenizer.push_to_hub(repo_id=args.repo_id, private=args.private, token=True, safe_serialization=True)
         logger.success("Model uploaded successfully! Will not train.")
         exit(0)
 
@@ -165,9 +166,6 @@ def train(args: TrainingArgs, wandb_logger: CustomWandbLogger, IS_ON_SLURM: bool
         auto_insert_metric_name=False,
         every_n_train_steps=int(save_interval),
     )
-    early_stopping_callback = EarlyStopping(
-        monitor=monitor_loss, min_delta=args.early_stopping_delta, patience=args.early_stopping_patience
-    )
     callbacks = [
         wandb_disk_cleanup_callback,
         lr_monitor,
@@ -176,7 +174,6 @@ def train(args: TrainingArgs, wandb_logger: CustomWandbLogger, IS_ON_SLURM: bool
     if args.task == "pretraining":
         callbacks.append(ProgressMetricCallback())
         callbacks.append(checkpoint_callback)
-        # callbacks.append(early_stopping_callback)
     if args.accelerator == "cuda":
         callbacks.append(CUDAMetricsCallback())
 
@@ -194,7 +191,7 @@ def train(args: TrainingArgs, wandb_logger: CustomWandbLogger, IS_ON_SLURM: bool
         strategy=args.distributed_strategy,
         logger=wandb_logger,
         deterministic=args.force_deterministic,
-        # callbacks=callbacks,
+        callbacks=callbacks,
         plugins=plugins,
         precision=args.precision,
         gradient_clip_val=args.grad_clip,

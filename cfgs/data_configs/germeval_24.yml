@@ -1,0 +1,7 @@
+out_dir: /hpi/fs00/share/fg-demelo/efficient-bert-pretraining/data/germeval_24/germeval_24
+dataset: germeval_24
+truncate: False
+
+# Since the dataset is very small we use only 1000 for dev
+dev_size: 1000
+# debug: True

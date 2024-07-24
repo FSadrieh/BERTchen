@@ -1,0 +1,29 @@
+# Normal pre-training args
+seed: 42
+from_scratch: True
+eval_interval: 0.02 # We want evaluate all 50 steps, therefore 2_500 * x = 50
+task: pretraining
+hf_model_name: mosaicml/mosaic-bert-base
+max_time: 00:04:00:00
+finetune_cfgs_after_training: cfgs/germeval_B.yml,cfgs/germeval_24.yml,cfgs/germanquad.yml
+
+# MosaicBERT hyp
+lr_schedule: linear
+warmup_period: 0.06
+weight_decay: 1.0e-5
+learning_rate: 5.0e-4
+training_goal: 2_500
+
+# Hybrid params
+dataset_switching_patience: 2
+dataset_switching_delta: 1
+reload_dataloaders_every_n_epochs: 1
+
+# Tune per run
+mlm_probabilities: [0.3, 0.3, 0.3, 0.3]
+
+batch_size: 1024  #The batch size is for the longest seq len. MosaicBERT has 4096 for 128 seq len => 1024
+micro_batch_sizes: [512, 256, 128, 64]
+eval_micro_batch_sizes: [1024, 512, 256, 128]
+data_dir: /hpi/fs00/share/fg-demelo/efficient-bert-pretraining/data/CulturaX_2_percent/CulturaX_hybrid_naive/
+run_name: CulturaX_hybrid_naive

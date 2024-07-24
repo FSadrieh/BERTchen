@@ -317,8 +317,6 @@ def make_tokenize_function(tokenizer, task_type, max_seq_length=None, truncate=T
                 tokenized, examples["answers"], examples["id"], examples["context"], tokenizer
             )
 
-
-
         return {
             "id": ids,
             "input_ids": tokenized["input_ids"],
@@ -327,9 +325,7 @@ def make_tokenize_function(tokenizer, task_type, max_seq_length=None, truncate=T
             "end_positions": end_positions,
             "answers": answers,
             "context": context,
-            "offset_mapping": tokenized[
-                "offset_mapping"
-            ],
+            "offset_mapping": tokenized["offset_mapping"],
         }
 
     def pre_training_tokenize_function(examples):
@@ -425,7 +421,7 @@ def _get_untruncated_labels_for_qa(inputs, answers, ids, context, tokenizer):
         end_char = answer["answer_start"][0] + len(answer["text"][0].strip())
 
         while offset[idx][1] >= end_char:
-                idx -= 1
+            idx -= 1
         end_positions.append(idx + 1)
 
     # for i, answer in enumerate(output_answers):

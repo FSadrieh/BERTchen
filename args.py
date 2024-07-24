@@ -157,11 +157,6 @@ class TrainingArgs:
     fast_dev_run: bool = field(default=False)
     "Do fast run through training and validation with reduced sizes."
 
-    early_stopping_patience: int = field(default=5)
-    "Early stopping patience."
-
-    early_stopping_delta: float = field(default=0.01)
-
     ###############################################
     ###### Efficient Bert Pretraining Params ######
     ###############################################
@@ -268,7 +263,6 @@ class TrainingArgs:
         self.beta1 = float(self.beta1)
         self.beta2 = float(self.beta2)
         self.epsilon = float(self.epsilon)
-        self.early_stopping_delta = float(self.early_stopping_delta)
 
         if self.repo_id:
             assert self.saved_checkpoint_path is not None, "You need to specify a saved checkpoint to upload a model."

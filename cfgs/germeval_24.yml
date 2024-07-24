@@ -1,0 +1,15 @@
+micro_batch_sizes: [16]
+eval_micro_batch_sizes: [512]
+batch_size: 16
+task: sequence-classification
+data_dir: /hpi/fs00/share/fg-demelo/efficient-bert-pretraining/data/germeval_24/konst_tok
+seed: 42
+base_unit: epochs
+dataset_yml: use_train_val_info
+num_labels: 5
+metric_name_for_sc: germeval_24
+
+# As it is most closely related to SST-2 we take the hyper-parameters from MosaicBert for this task
+learning_rate: 3e-5
+weight_decay: 3e-6
+training_goal: 3

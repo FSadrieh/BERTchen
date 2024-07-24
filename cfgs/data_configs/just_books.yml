@@ -1,0 +1,7 @@
+out_dir: /hpi/fs00/share/fg-demelo/efficient-bert-pretraining/data/books/normal
+dataset: wikipedia
+data_location: /hpi/fs00/share/fg-demelo/efficient-bert-pretraining/data/books/train.jsonl
+train_sequence_lengths: 512
+val_sequence_lengths: 64,128,256,512
+
+# debug: True

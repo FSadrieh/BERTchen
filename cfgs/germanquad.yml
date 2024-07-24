@@ -1,0 +1,14 @@
+micro_batch_sizes: [16]
+eval_micro_batch_sizes: [512]
+batch_size: 16
+task: question-answering
+data_dir: /hpi/fs00/share/fg-demelo/efficient-bert-pretraining/data/germanquad/konst_tok_no_trunc_2
+seed: 42
+base_unit: epochs
+dataset_yml: use_train_val_info
+
+# As it is most closely related to QNLI we take the hyper-parameters from MosaicBert for this task.
+# Since the dataset is much smaller, we use 20 epochs instead of 10
+learning_rate: 1e-5
+weight_decay: 1e-6
+training_goal: 20

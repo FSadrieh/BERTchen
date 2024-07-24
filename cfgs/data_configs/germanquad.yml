@@ -1,0 +1,5 @@
+out_dir: /hpi/fs00/share/fg-demelo/efficient-bert-pretraining/data/germanquad/germanquad
+dataset: germanquad
+truncate: False
+
+# debug: True
