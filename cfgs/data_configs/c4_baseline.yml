@@ -1,5 +1,5 @@
-out_dir: /hpi/fs00/share/fg-demelo/efficient-bert-pretraining/data/c4_1.25_percent/c4_baseline_512
+out_dir: /hpi/fs00/share/fg-demelo/efficient-bert-pretraining/data/c4/c4_baseline_512
 dataset: c4
-data_location: /hpi/fs00/share/fg-demelo/efficient-bert-pretraining/data/c4_1.25_percent/train.jsonl
+data_location: /hpi/fs00/share/fg-demelo/efficient-bert-pretraining/data/c4/train.jsonl
 train_sequence_lengths: 512
 val_sequence_lengths: 64,128,256,512

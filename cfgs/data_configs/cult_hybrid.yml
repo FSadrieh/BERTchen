@@ -4,5 +4,3 @@ data_location: /hpi/fs00/share/fg-demelo/efficient-bert-pretraining/data/Cultura
 train_sequence_lengths: 64,128,256,512
 val_sequence_lengths: 64,128,256,512
 dataset_size_splits: 0.15,0.15,0.15,0.55
-
-# debug: True

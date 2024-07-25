@@ -4,4 +4,3 @@ truncate: False
 
 # Since the dataset is very small we use only 1000 for dev
 dev_size: 1000
-# debug: True

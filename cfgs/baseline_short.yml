@@ -20,5 +20,5 @@ mlm_probabilities: [0.3]
 batch_size: 4096 # We tune the batch size in the same way as the micro_bs per run. 4096 was the original bs for 128 seq len
 micro_batch_sizes: [256]
 eval_micro_batch_sizes: [1024, 512, 256, 128]
-data_dir: /hpi/fs00/share/fg-demelo/efficient-bert-pretraining/data/c4_1.25_percent/c4_baseline_128
-run_name: c4_baseline_128
+data_dir: /hpi/fs00/share/fg-demelo/efficient-bert-pretraining/data/CulturaX_2_percent/CulturaX_baseline_128
+run_name: cult_baseline_128

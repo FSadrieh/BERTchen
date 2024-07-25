@@ -2,7 +2,7 @@ micro_batch_sizes: [16]
 eval_micro_batch_sizes: [512]
 batch_size: 16
 task: question-answering
-data_dir: /hpi/fs00/share/fg-demelo/efficient-bert-pretraining/data/germanquad/konst_tok_no_trunc_2
+data_dir: /hpi/fs00/share/fg-demelo/efficient-bert-pretraining/data/germanquad/germanquad
 seed: 42
 base_unit: epochs
 dataset_yml: use_train_val_info
