@@ -1,37 +1,38 @@
-# Efficient BERT pre-training
+# BERTchen
 
-This repository provides the paper and code of **[Explainable Soft Prompts](explainable_soft_prompts.pdf)**, a study that explores prompt tuning across multiple Large Language Models (LLMs) for improved interpretability and transferability.
+This repository provides the paper and code of **[BERTchen](BERTchen_paper.pdf)**, a study that explores efficient BERT pre-training, to create the best German BERT model.
 
 ## Introduction
 
-Prompt tuning in natural language processing allows leveraging Large Language Models (LLMs) efficiently. Yet soft prompts struggle with transferability between models and interpretability. This study introduces a method of tuning soft prompts across multiple models to uncover the **"token splitting effect"**. Prompt tokens align with specific models, lying in their embedding spaces and playing a crucial role in their performance. We show how this is hindering transferability, but allowing prompt compression after training. Our research highlights the soft prompt functionality across multiple models and sets a foundation for optimizing soft prompts through strategic compression and a deeper understanding of token importance.
+ABSTRACT
 
 ## Reproducibility
 
-In <code>cfgs</code> all used training configurations are stored and in <code>slurm/sbatchs</code> all sbatchs for running on a slurm cluster.
+All pre-training and fine-tuning hyperparameter configurations are stored in <code>cfgs</code>.
 
-TODO: To reproduce the paper results, use the scripts from the <code>scripts</code> folder or <code>run_emotion.sh</code>, <code>run_imdb.sh</code> and <code>run_mnli.sh</code>.
-
-For detailed usage, see the information on the NLP research template, this works builds upon.
+To reproduce the paper results, use the sbatchs in <code>slurm/sbatchs</code>.
 
 The recommended usage is:
 
-1. Cloning of the repository with
+1. Clone the repository with
 
 ```bash
-git clone git@github.com:FSadrieh/efficient-bert-pretraining.git
-cd efficient-bert-pretraining
+git@github.com:FSadrieh/BERTchen.git
+cd BERTchen
 ```
 
-2. Create conda enviroment and install the triton dependency:
+2. Create a conda environment and install the correct version of setuptools to install the remaining packages:
 
 ```bash
-conda-lock install --name <env-name> conda-lock.yml
-conda activate <env-name>
-pip install triton==2.1.0
+conda-lock install --name ld conda-lock.yml
+conda activate ld
+pip uninstall setuptools -y
+pip install setuptools==69.5.1 packaging
+pip install triton==2.1.0 flash-attn==2.5.9.post1
 ```
 
-3. Run the desired script to reproduce specific results using the <code>scripts</code> folder.
+3. Download all datasets using the sbatchs in <code>slurm/sbatchs/download</code>.
+4. Run the experiments using the sbatchs in <code>slurm/sbatchs</code>. Note that for each table in the paper there is one sbatch, except for the tokenizer experiment, which is also in **[the baseline sbatch](slurm/sbatchs/baseline_experiment.slurm)**
 
 ## Cite this work
 
