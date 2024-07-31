@@ -2,9 +2,9 @@
 
 This repository provides the paper and code of **[BERTchen](BERTchen_paper.pdf)**, a study that explores efficient BERT pre-training, to create the best German BERT model.
 
-## Introduction
+## Abstract
 
-ABSTRACT
+Encoder-only models perform well in a variety of tasks. However, their efficient pretraining and language adaptation remain underexplored. This study presents a method for training efficient, state-of-the-art German encoder-only models. Our research highlights the inefficiency of BERT models, in particular due to the plateau effect, and how architectural improvements such as the MosaicBERT architecture and curriculum learning approaches can combat it. We show the importance of an in-domain tokenizer and investigate different pretraining sequence lengths and datasets. BERTchen can beat the previous best model GottBERT on GermanQuAD, increasing the F1 score from 55.14 to 95.1 and the exact match from 73.06 to 91.9. Our research provides a foundation for training efficient encoder-only models in different languages.
 
 ## Reproducibility
 
